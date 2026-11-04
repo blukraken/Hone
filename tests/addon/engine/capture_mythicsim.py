@@ -26,6 +26,9 @@ from collections import Counter
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import capture_model  # noqa: E402
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 FIXTURES = os.path.join(ROOT, "tests", "fixtures")
 OUT_DIR = os.path.join(ROOT, "tests", "addon", "engine", "data")
@@ -147,12 +150,19 @@ def snapshot_of(case, request, prepared, multipliers):
 
 
 def measure_multipliers(request, tmp, base_sheet):
-    out = {}
-    for stat in ("strength", "agility", "intellect"):
-        index, field = STATS[stat]
+    """Sheet points per stat point for strength, agility and intellect, and every sheet field
+    each weighed stat moves, both from preparing again with +100 of the stat."""
+    out, per_point = {}, {}
+    for stat, (index, field) in STATS.items():
         prepared, _ = prepare(with_bonus(request, index, 100), tmp, "mult")
-        out[stat] = round((prepared["player"]["stats"][field] - base_sheet[field]) / 100, 6)
-    return out
+        plus = prepared["player"]["stats"]
+        if stat in ("strength", "agility", "intellect"):
+            out[stat] = round((plus[field] - base_sheet[field]) / 100, 6)
+        per_point[stat] = capture_model.per_point_of(base_sheet, plus, 100)
+        per_point[stat]["mana"] = (prepared["player"]["mana"]["max"] - base_sheet["_mana"]) / 100
+        if per_point[stat]["mana"] == 0:
+            del per_point[stat]["mana"]
+    return out, per_point
 
 
 def action_key(action_id):
@@ -216,7 +226,14 @@ def combat_of(prepared, tmp):
     for key, m in metrics.items():
         if m.get("casts"):
             per_fight[key] = round(m["casts"] / iterations, 4)
+    actions = {}
+    for key, m in metrics.items():
+        row = {k: round(m.get(k, 0) / iterations, 4) for k in
+               ("casts", "hits", "crits", "misses", "dodges", "glances", "damage")}
+        if any(row.values()):
+            actions[key] = row
     reference = {
+        "actionsPerFight": actions,
         "dps": result["result"]["raidMetrics"]["dps"]["avg"],
         "dpsStdev": result["result"]["raidMetrics"]["dps"]["stdev"],
         "iterations": iterations,
@@ -266,8 +283,10 @@ def main():
         for case in CASES:
             request = request_for(case)
             prepared, _ = prepare(request, tmp, "base")
-            mult = measure_multipliers(request, tmp, prepared["player"]["stats"])
+            base_sheet = dict(prepared["player"]["stats"], _mana=prepared["player"]["mana"]["max"])
+            mult, per_point = measure_multipliers(request, tmp, base_sheet)
             snap = snapshot_of(case, request, prepared, mult)
+            snap["model"] = capture_model.model_of(prepared, request, per_point)
             snap["combat"], snap["reference"]["mythicsim"] = combat_of(prepared, tmp)
             snapshots[case["id"]] = snap
             if not case.get("windfury"):

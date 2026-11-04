@@ -20,30 +20,55 @@ function Weights.shift(snapshot, stat, amount)
   return out
 end
 
--- Forward-difference weight of every stat in `stats`, per point.
-function Weights.forward(dpsOf, snapshot, base, stats, delta)
+-- The step of every stat in `stats`. A stat's step is `steps[stat]`, else `fallback`. A step
+-- that would carry the stat past a cap above it stops at that cap, so the weight is the slope
+-- below the cap.
+function Weights.steps(snapshot, stats, steps, fallback, caps)
+  local out = {}
+  for _, stat in ipairs(stats) do
+    local step = (steps and steps[stat]) or fallback
+    local value = (snapshot.stats and snapshot.stats[stat]) or 0
+    for _, cap in ipairs(caps[stat] or {}) do
+      if cap > value and cap < value + step then step = cap - value end
+    end
+    out[stat] = step
+  end
+  return out
+end
+
+-- Forward-difference weight of every stat in `stats`, per point, at each stat's own step.
+function Weights.forward(dpsOf, snapshot, base, stats, steps)
   local weights = {}
   for _, stat in ipairs(stats) do
-    weights[stat] = (dpsOf(Weights.shift(snapshot, stat, delta)) - base) / delta
+    local step = steps[stat]
+    weights[stat] = (dpsOf(Weights.shift(snapshot, stat, step)) - base) / step
   end
   return weights
 end
 
--- One-sided weights for each stat that sits within `window * delta` of a cap.
--- `caps` maps a stat to the stat value where its cap is. Both slopes are taken at the cap
--- itself, so `below` is the loss per point under it and `above` the gain per point past it.
-function Weights.caps(dpsOf, snapshot, base, caps, delta, window)
+-- One-sided weights at every cap within `window` steps of a stat's value. `caps` maps a stat
+-- to a list of the stat values where its caps are. Both slopes are taken at the cap itself, so
+-- `below` is the loss per point under it and `above` the gain per point past it. Each stat's
+-- entries are sorted by cap.
+function Weights.caps(dpsOf, snapshot, base, caps, steps, fallback, window)
   local out = {}
   for _, stat in ipairs(Table.sortedKeys(caps)) do
-    local cap = caps[stat]
+    local step = (steps and steps[stat]) or fallback
     local value = (snapshot.stats and snapshot.stats[stat]) or 0
-    if math.abs(value - cap) <= window * delta then
-      local toCap = cap - value
-      local atCap = toCap == 0 and base or dpsOf(Weights.shift(snapshot, stat, toCap))
-      local below = (atCap - dpsOf(Weights.shift(snapshot, stat, toCap - delta))) / delta
-      local above = (dpsOf(Weights.shift(snapshot, stat, toCap + delta)) - atCap) / delta
-      out[stat] = { below = below, above = above, cap = cap, value = value }
+    local list = {}
+    for _, cap in ipairs(caps[stat]) do list[#list + 1] = cap end
+    table.sort(list)
+    local entries = {}
+    for _, cap in ipairs(list) do
+      if math.abs(value - cap) <= window * step then
+        local toCap = cap - value
+        local atCap = toCap == 0 and base or dpsOf(Weights.shift(snapshot, stat, toCap))
+        local below = (atCap - dpsOf(Weights.shift(snapshot, stat, toCap - step))) / step
+        local above = (dpsOf(Weights.shift(snapshot, stat, toCap + step)) - atCap) / step
+        entries[#entries + 1] = { below = below, above = above, cap = cap, value = value }
+      end
     end
+    if #entries > 0 then out[stat] = entries end
   end
   return out
 end

@@ -63,7 +63,7 @@ end
 function Stub.caps(snapshot)
   local char = derive(snapshot)
   local cap = Core.AttackTable.whiteHitCap(char.table, false)
-  return { hit_rating = Core.Stats.ratingFromPercent("hit_rating", cap, snapshot.level) }
+  return { hit_rating = { Core.Stats.ratingFromPercent("hit_rating", cap, snapshot.level) } }
 end
 
 function Stub.coverage()
@@ -99,9 +99,11 @@ print(string.format("WARRIOR/STUB dps %.3f", result.dps))
 for _, stat in ipairs(Stub.weightStats) do
   print(string.format("  weight %-13s %.5f", stat, result.weights[stat]))
 end
-for stat, cw in pairs(result.capWeights) do
-  print(string.format("  cap    %-13s below %.5f above %.5f (value %s cap %s)", stat, cw.below, cw.above,
-    tostring(cw.value), tostring(cw.cap)))
+for stat, list in pairs(result.capWeights) do
+  for _, cw in ipairs(list) do
+    print(string.format("  cap    %-13s below %.5f above %.5f (value %s cap %s)", stat, cw.below, cw.above,
+      tostring(cw.value), tostring(cw.cap)))
+  end
 end
 print(string.format("  coverage complete=%s unmodeled=%s", tostring(result.coverage.complete),
   table.concat(result.coverage.unmodeled, ",")))
@@ -116,7 +118,7 @@ end
 check("every stub stat gets a weight", weighed)
 check("strength weighs twice attack power", math.abs(result.weights.strength - 2 * result.weights.attack_power) < 1e-9,
   string.format("%.6f vs %.6f", result.weights.strength, 2 * result.weights.attack_power))
-local cw = result.capWeights.hit_rating
+local cw = result.capWeights.hit_rating and result.capWeights.hit_rating[1]
 check("hit at the white cap gets one-sided weights", cw ~= nil and cw.cap == 90 and cw.below > 0 and cw.above == 0,
   cw and string.format("cap %s below %s above %s", tostring(cw.cap), tostring(cw.below), tostring(cw.above)))
 check("coverage names the stub's gaps", result.coverage.complete == false and #result.coverage.unmodeled == 3)

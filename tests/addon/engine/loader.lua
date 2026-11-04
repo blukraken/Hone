@@ -14,6 +14,7 @@ Loader.CORE = {
   "Hone/Engine/Core/Rng.lua",
   "Hone/Engine/Core/Stats.lua",
   "Hone/Engine/Core/AttackTable.lua",
+  "Hone/Engine/Core/SpellTable.lua",
   "Hone/Engine/Core/Weights.lua",
   "Hone/Engine/Contract.lua",
 }
@@ -21,6 +22,7 @@ Loader.CORE = {
 Loader.CLASSES = {
   "Hone/Engine/Classes/Shaman/Data.lua",
   "Hone/Engine/Classes/Shaman/WindfuryWeapon.lua",
+  "Hone/Engine/Classes/Shaman/EventSim.lua",
   "Hone/Engine/Classes/Shaman/Enhancement.lua",
 }
 

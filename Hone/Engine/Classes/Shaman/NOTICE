@@ -1,5 +1,5 @@
-The Shaman rules in this folder (Data.lua, WindfuryWeapon.lua and the rule logic in
-Enhancement.lua) are translated from MythicSim Forever Engine,
+The Shaman rules in this folder (Data.lua, WindfuryWeapon.lua, EventSim.lua and the rule
+logic in Enhancement.lua) are translated from MythicSim Forever Engine,
 https://github.com/sage3648/mythicsim-forever-engine, at commit
 8e9b8df69ef9b27f16c23b51e1bb1686bd9f1d68. No MythicSim source is included.
 MythicSim is distributed under the license below.

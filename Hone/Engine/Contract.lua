@@ -6,7 +6,7 @@
 -- A model is a table with:
 --   weightStats                      list of stat names to weigh
 --   simulate(snapshot, scenario)     -> { dps = n, dpsStdev = n?, iterations = n? }
---   caps(snapshot, scenario)?        -> { [stat] = stat value of the cap }
+--   caps(snapshot, scenario)?        -> { [stat] = { stat value of each cap, ... } }
 --   coverage(snapshot, scenario)?    -> list of unmodeled mechanic names
 --
 -- A snapshot is plain data: { class = token, spec = token, stats = { [stat] = n }, ... }.
@@ -15,7 +15,13 @@
 -- evaluate returns
 --   dps, dpsStdev, iterations
 --   weights[stat]                    forward difference per point
---   capWeights[stat]                 { below = n, above = n, cap = n, value = n } at a cap
+--   steps[stat]                      the step each weight used
+--   capWeights[stat]                 list of { below = n, above = n, cap = n, value = n }, one
+--                                    per cap within the scenario's capWindow, sorted by cap
+--
+-- A scenario's weightSteps sets each stat's step and weightDelta is the step of any stat it
+-- leaves out. A scenario that sets weightDelta alone steps every stat by it. A step stops at a
+-- cap rather than cross it.
 --   coverage                         { complete = bool, unmodeled = { name, ... } }
 
 local _, ns = ...
@@ -61,7 +67,10 @@ function Contract.evaluate(snapshot, scenario)
     error(string.format("evaluate: no model registered for %s/%s",
       tostring(snapshot.class), tostring(snapshot.spec)), 2)
   end
+  local ownDeltaOnly = type(scenario) == "table" and scenario.weightDelta ~= nil
+    and scenario.weightSteps == nil
   scenario = Table.merge(Defaults, scenario)
+  if ownDeltaOnly then scenario.weightSteps = {} end
 
   local function dpsOf(s)
     local run = impl.simulate(s, scenario)
@@ -70,18 +79,24 @@ function Contract.evaluate(snapshot, scenario)
   end
 
   local dps, run = dpsOf(snapshot)
-  local delta = scenario.weightDelta
   local stats = scenario.stats or impl.weightStats
 
   local unmodeled = impl.coverage and impl.coverage(snapshot, scenario) or {}
   local caps = impl.caps and impl.caps(snapshot, scenario) or {}
+  for stat, list in pairs(caps) do
+    assert(type(list) == "table", "caps must map each stat to a list of caps: " .. tostring(stat))
+  end
+  local steps = Weights.steps(snapshot, stats, scenario.weightSteps, scenario.weightDelta, caps)
 
   return {
     dps = dps,
     dpsStdev = run.dpsStdev,
     iterations = run.iterations,
-    weights = Weights.forward(dpsOf, snapshot, dps, stats, delta),
-    capWeights = Weights.caps(dpsOf, snapshot, dps, caps, delta, scenario.capWindow),
+    run = run,
+    weights = Weights.forward(dpsOf, snapshot, dps, stats, steps),
+    steps = steps,
+    capWeights = Weights.caps(dpsOf, snapshot, dps, caps, scenario.weightSteps, scenario.weightDelta,
+      scenario.capWindow),
     coverage = { complete = #unmodeled == 0, unmodeled = unmodeled },
   }
 end

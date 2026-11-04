@@ -79,16 +79,18 @@ end
 -- A fake model with known slopes
 ------------------------------------------------------------------------------
 
--- dps = 100 + 2*power + 3*min(skill, 50) + 0.5*max(skill - 50, 0)
+-- dps = 100 + 2*power + 3*min(skill, 50) + 1*clamp(skill - 50, 0, 30) + 0.5*max(skill - 80, 0)
+-- Skill has two caps, at 50 and 80.
+local function piecewise(skill)
+  return 3 * math.min(skill, 50) + 1 * math.max(math.min(skill, 80) - 50, 0) + 0.5 * math.max(skill - 80, 0)
+end
 local fake = {
   weightStats = { "power", "skill" },
   simulate = function(snapshot)
     local s = snapshot.stats
-    local skill = s.skill
-    local dps = 100 + 2 * s.power + 3 * math.min(skill, 50) + 0.5 * math.max(skill - 50, 0)
-    return { dps = dps, iterations = 1 }
+    return { dps = 100 + 2 * s.power + piecewise(s.skill), iterations = 1 }
   end,
-  caps = function() return { skill = 50, power = 1000 } end,
+  caps = function() return { skill = { 80, 50 }, power = { 1000 } } end,
   coverage = function(snapshot) return snapshot.unmodeled or {} end,
 }
 
@@ -108,20 +110,52 @@ check("evaluate names the missing model",
 local atCap = Contract.evaluate({ class = "TESTCLASS", spec = "LINEAR", stats = { power = 10, skill = 50 } },
   { weightDelta = 1 })
 check("dps comes from simulate", near(atCap.dps, 100 + 20 + 150))
-check("weights are forward slopes per point", near(atCap.weights.power, 2) and near(atCap.weights.skill, 0.5),
+check("weights are forward slopes per point", near(atCap.weights.power, 2) and near(atCap.weights.skill, 1),
   string.format("power %s skill %s", tostring(atCap.weights.power), tostring(atCap.weights.skill)))
-local cw = atCap.capWeights.skill
+local list = atCap.capWeights.skill
+local cw = list and list[1]
+check("capWeights are a list per stat", type(list) == "table" and #list == 1, list and tostring(#list))
 check("capWeights at a cap give the slope below", cw ~= nil and near(cw.below, 3), cw and tostring(cw.below))
-check("capWeights at a cap give the slope above", cw ~= nil and near(cw.above, 0.5), cw and tostring(cw.above))
+check("capWeights at a cap give the slope above", cw ~= nil and near(cw.above, 1), cw and tostring(cw.above))
 check("capWeights report the cap and the value", cw ~= nil and cw.cap == 50 and cw.value == 50)
 check("capWeights skip a stat far from its cap", atCap.capWeights.power == nil)
 
 local nearCap = Contract.evaluate({ class = "TESTCLASS", spec = "LINEAR", stats = { power = 10, skill = 54 } },
   { weightDelta = 10 })
-local ncw = nearCap.capWeights.skill
-check("capWeights near a cap are taken at the cap", ncw ~= nil and near(ncw.below, 3) and near(ncw.above, 0.5),
+local ncw = nearCap.capWeights.skill and nearCap.capWeights.skill[1]
+check("capWeights near a cap are taken at the cap", ncw ~= nil and near(ncw.below, 3) and near(ncw.above, 1),
   ncw and string.format("below %s above %s", tostring(ncw.below), tostring(ncw.above)))
-check("a scenario field overrides the default step", near(nearCap.weights.power, 2))
+check("a scenario field overrides the default step", near(nearCap.weights.power, 2) and nearCap.steps.power == 10)
+
+-- Both caps sit within the window: a 30-point step and a value of 65 reach 50 and 80.
+local both = Contract.evaluate({ class = "TESTCLASS", spec = "LINEAR", stats = { power = 10, skill = 65 } },
+  { weightSteps = { power = 1, skill = 30 } })
+local bl = both.capWeights.skill or {}
+check("a stat with two caps in reach reports both, sorted", #bl == 2 and bl[1].cap == 50 and bl[2].cap == 80,
+  string.format("%d entries", #bl))
+check("each cap has its own one-sided slopes", #bl == 2 and near(bl[1].below, 3) and near(bl[1].above, 1)
+  and near(bl[2].below, 1) and near(bl[2].above, 0.5),
+  #bl == 2 and string.format("%s %s %s %s", bl[1].below, bl[1].above, bl[2].below, bl[2].above) or "")
+
+local perStat = Contract.evaluate({ class = "TESTCLASS", spec = "LINEAR", stats = { power = 10, skill = 20 } },
+  { weightSteps = { power = 7, skill = 4 } })
+check("each stat takes its own step", perStat.steps.power == 7 and perStat.steps.skill == 4
+  and near(perStat.weights.power, 2) and near(perStat.weights.skill, 3))
+
+local stops = Contract.evaluate({ class = "TESTCLASS", spec = "LINEAR", stats = { power = 10, skill = 45 } },
+  { weightSteps = { power = 1, skill = 100 } })
+check("a step that would cross a cap stops at it", stops.steps.skill == 5 and near(stops.weights.skill, 3),
+  string.format("step %s weight %s", tostring(stops.steps.skill), tostring(stops.weights.skill)))
+
+local defaults = Contract.evaluate({ class = "TESTCLASS", spec = "LINEAR", stats = { power = 10, skill = 200 } })
+check("default steps come per stat from Defaults", defaults.steps.power == ns.Engine.Core.Defaults.weightDelta
+  and defaults.steps.skill == ns.Engine.Core.Defaults.weightDelta)
+
+check("caps that are not lists are refused", raises(function()
+  Contract.register("TESTCLASS", "BADCAPS", { weightStats = { "power" }, simulate = fake.simulate,
+    caps = function() return { power = 50 } end })
+  Contract.evaluate({ class = "TESTCLASS", spec = "BADCAPS", stats = { power = 1, skill = 1 } })
+end, "list of caps"))
 
 check("coverage is complete with nothing unmodeled",
   atCap.coverage.complete == true and #atCap.coverage.unmodeled == 0)
@@ -150,10 +184,14 @@ for _, stat in ipairs(Contract.lookup("SHAMAN", "ENHANCEMENT").weightStats) do
   if type(hitcap.weights[stat]) ~= "number" or hitcap.weights[stat] ~= hitcap.weights[stat] then allWeights = false end
 end
 check("Enhancement weighs every stat it lists", allWeights)
-local hcw = hitcap.capWeights.hit_rating
+local hcw = hitcap.capWeights.hit_rating and hitcap.capWeights.hit_rating[1]
 check("Enhancement at the special hit cap reports one-sided hit weights",
   hcw ~= nil and hcw.below > 0 and hcw.above == 0 and hcw.cap == 90,
   hcw and string.format("below %s above %s cap %s", tostring(hcw.below), tostring(hcw.above), tostring(hcw.cap)))
+local dwCaps = Contract.lookup("SHAMAN", "ENHANCEMENT").caps(snapshots["enh60-windfury-dw26-29"]).hit_rating
+check("Enhancement lists the special and white hit caps when dual wielding",
+  type(dwCaps) == "table" and #dwCaps == 2 and math.abs(dwCaps[1] - 90) < 1e-9 and math.abs(dwCaps[2] - 280) < 1e-9,
+  dwCaps and table.concat(dwCaps, ", "))
 check("Enhancement names its unmodeled mechanics",
   hitcap.coverage.complete == false and #hitcap.coverage.unmodeled > 0)
 
