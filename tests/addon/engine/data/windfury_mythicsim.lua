@@ -54,6 +54,156 @@ return {
         ["iterations"] = 3000,
         ["procs"] = 28967,
         ["seed"] = 9000042,
+      }, {
+        ["eligible"] = 152025,
+        ["iterations"] = 3000,
+        ["procs"] = 29154,
+        ["seed"] = 10000042,
+      }, {
+        ["eligible"] = 152501,
+        ["iterations"] = 3000,
+        ["procs"] = 29190,
+        ["seed"] = 11000042,
+      }, {
+        ["eligible"] = 152848,
+        ["iterations"] = 3000,
+        ["procs"] = 29417,
+        ["seed"] = 12000042,
+      }, {
+        ["eligible"] = 152698,
+        ["iterations"] = 3000,
+        ["procs"] = 28915,
+        ["seed"] = 13000042,
+      }, {
+        ["eligible"] = 152416,
+        ["iterations"] = 3000,
+        ["procs"] = 28924,
+        ["seed"] = 14000042,
+      }, {
+        ["eligible"] = 152568,
+        ["iterations"] = 3000,
+        ["procs"] = 28913,
+        ["seed"] = 15000042,
+      }, {
+        ["eligible"] = 152714,
+        ["iterations"] = 3000,
+        ["procs"] = 28957,
+        ["seed"] = 16000042,
+      }, {
+        ["eligible"] = 152581,
+        ["iterations"] = 3000,
+        ["procs"] = 29267,
+        ["seed"] = 17000042,
+      }, {
+        ["eligible"] = 152441,
+        ["iterations"] = 3000,
+        ["procs"] = 29294,
+        ["seed"] = 18000042,
+      }, {
+        ["eligible"] = 152506,
+        ["iterations"] = 3000,
+        ["procs"] = 29251,
+        ["seed"] = 19000042,
+      }, {
+        ["eligible"] = 152920,
+        ["iterations"] = 3000,
+        ["procs"] = 29333,
+        ["seed"] = 20000042,
+      }, {
+        ["eligible"] = 152402,
+        ["iterations"] = 3000,
+        ["procs"] = 28831,
+        ["seed"] = 21000042,
+      }, {
+        ["eligible"] = 152216,
+        ["iterations"] = 3000,
+        ["procs"] = 29124,
+        ["seed"] = 22000042,
+      }, {
+        ["eligible"] = 152454,
+        ["iterations"] = 3000,
+        ["procs"] = 29248,
+        ["seed"] = 23000042,
+      }, {
+        ["eligible"] = 152650,
+        ["iterations"] = 3000,
+        ["procs"] = 29151,
+        ["seed"] = 24000042,
+      }, {
+        ["eligible"] = 152311,
+        ["iterations"] = 3000,
+        ["procs"] = 29061,
+        ["seed"] = 25000042,
+      }, {
+        ["eligible"] = 152982,
+        ["iterations"] = 3000,
+        ["procs"] = 29209,
+        ["seed"] = 26000042,
+      }, {
+        ["eligible"] = 152482,
+        ["iterations"] = 3000,
+        ["procs"] = 29073,
+        ["seed"] = 27000042,
+      }, {
+        ["eligible"] = 152394,
+        ["iterations"] = 3000,
+        ["procs"] = 28945,
+        ["seed"] = 28000042,
+      }, {
+        ["eligible"] = 152512,
+        ["iterations"] = 3000,
+        ["procs"] = 29155,
+        ["seed"] = 29000042,
+      }, {
+        ["eligible"] = 152330,
+        ["iterations"] = 3000,
+        ["procs"] = 28900,
+        ["seed"] = 30000042,
+      }, {
+        ["eligible"] = 152413,
+        ["iterations"] = 3000,
+        ["procs"] = 29018,
+        ["seed"] = 31000042,
+      }, {
+        ["eligible"] = 152476,
+        ["iterations"] = 3000,
+        ["procs"] = 28871,
+        ["seed"] = 32000042,
+      }, {
+        ["eligible"] = 152593,
+        ["iterations"] = 3000,
+        ["procs"] = 28880,
+        ["seed"] = 33000042,
+      }, {
+        ["eligible"] = 152576,
+        ["iterations"] = 3000,
+        ["procs"] = 29054,
+        ["seed"] = 34000042,
+      }, {
+        ["eligible"] = 152522,
+        ["iterations"] = 3000,
+        ["procs"] = 28993,
+        ["seed"] = 35000042,
+      }, {
+        ["eligible"] = 152595,
+        ["iterations"] = 3000,
+        ["procs"] = 28911,
+        ["seed"] = 36000042,
+      }, {
+        ["eligible"] = 152409,
+        ["iterations"] = 3000,
+        ["procs"] = 28943,
+        ["seed"] = 37000042,
+      }, {
+        ["eligible"] = 152615,
+        ["iterations"] = 3000,
+        ["procs"] = 29121,
+        ["seed"] = 38000042,
+      }, {
+        ["eligible"] = 152274,
+        ["iterations"] = 3000,
+        ["procs"] = 29089,
+        ["seed"] = 39000042,
       } },
     },
     ["enh60-windfury-dw20-29"] = {
@@ -108,6 +258,156 @@ return {
         ["iterations"] = 3000,
         ["procs"] = 38756,
         ["seed"] = 9000042,
+      }, {
+        ["eligible"] = 208118,
+        ["iterations"] = 3000,
+        ["procs"] = 38366,
+        ["seed"] = 10000042,
+      }, {
+        ["eligible"] = 209184,
+        ["iterations"] = 3000,
+        ["procs"] = 38639,
+        ["seed"] = 11000042,
+      }, {
+        ["eligible"] = 209154,
+        ["iterations"] = 3000,
+        ["procs"] = 38661,
+        ["seed"] = 12000042,
+      }, {
+        ["eligible"] = 208860,
+        ["iterations"] = 3000,
+        ["procs"] = 38871,
+        ["seed"] = 13000042,
+      }, {
+        ["eligible"] = 208608,
+        ["iterations"] = 3000,
+        ["procs"] = 38937,
+        ["seed"] = 14000042,
+      }, {
+        ["eligible"] = 208817,
+        ["iterations"] = 3000,
+        ["procs"] = 38986,
+        ["seed"] = 15000042,
+      }, {
+        ["eligible"] = 209238,
+        ["iterations"] = 3000,
+        ["procs"] = 39000,
+        ["seed"] = 16000042,
+      }, {
+        ["eligible"] = 209227,
+        ["iterations"] = 3000,
+        ["procs"] = 39050,
+        ["seed"] = 17000042,
+      }, {
+        ["eligible"] = 209016,
+        ["iterations"] = 3000,
+        ["procs"] = 39062,
+        ["seed"] = 18000042,
+      }, {
+        ["eligible"] = 208837,
+        ["iterations"] = 3000,
+        ["procs"] = 38797,
+        ["seed"] = 19000042,
+      }, {
+        ["eligible"] = 209076,
+        ["iterations"] = 3000,
+        ["procs"] = 38801,
+        ["seed"] = 20000042,
+      }, {
+        ["eligible"] = 208503,
+        ["iterations"] = 3000,
+        ["procs"] = 38812,
+        ["seed"] = 21000042,
+      }, {
+        ["eligible"] = 208874,
+        ["iterations"] = 3000,
+        ["procs"] = 38601,
+        ["seed"] = 22000042,
+      }, {
+        ["eligible"] = 208809,
+        ["iterations"] = 3000,
+        ["procs"] = 38955,
+        ["seed"] = 23000042,
+      }, {
+        ["eligible"] = 208576,
+        ["iterations"] = 3000,
+        ["procs"] = 38707,
+        ["seed"] = 24000042,
+      }, {
+        ["eligible"] = 208625,
+        ["iterations"] = 3000,
+        ["procs"] = 38653,
+        ["seed"] = 25000042,
+      }, {
+        ["eligible"] = 208961,
+        ["iterations"] = 3000,
+        ["procs"] = 39022,
+        ["seed"] = 26000042,
+      }, {
+        ["eligible"] = 209052,
+        ["iterations"] = 3000,
+        ["procs"] = 38932,
+        ["seed"] = 27000042,
+      }, {
+        ["eligible"] = 209214,
+        ["iterations"] = 3000,
+        ["procs"] = 38889,
+        ["seed"] = 28000042,
+      }, {
+        ["eligible"] = 208323,
+        ["iterations"] = 3000,
+        ["procs"] = 38461,
+        ["seed"] = 29000042,
+      }, {
+        ["eligible"] = 209194,
+        ["iterations"] = 3000,
+        ["procs"] = 38683,
+        ["seed"] = 30000042,
+      }, {
+        ["eligible"] = 208659,
+        ["iterations"] = 3000,
+        ["procs"] = 39094,
+        ["seed"] = 31000042,
+      }, {
+        ["eligible"] = 208959,
+        ["iterations"] = 3000,
+        ["procs"] = 39008,
+        ["seed"] = 32000042,
+      }, {
+        ["eligible"] = 209077,
+        ["iterations"] = 3000,
+        ["procs"] = 38754,
+        ["seed"] = 33000042,
+      }, {
+        ["eligible"] = 208848,
+        ["iterations"] = 3000,
+        ["procs"] = 38726,
+        ["seed"] = 34000042,
+      }, {
+        ["eligible"] = 208526,
+        ["iterations"] = 3000,
+        ["procs"] = 38272,
+        ["seed"] = 35000042,
+      }, {
+        ["eligible"] = 208892,
+        ["iterations"] = 3000,
+        ["procs"] = 38763,
+        ["seed"] = 36000042,
+      }, {
+        ["eligible"] = 208175,
+        ["iterations"] = 3000,
+        ["procs"] = 38541,
+        ["seed"] = 37000042,
+      }, {
+        ["eligible"] = 208889,
+        ["iterations"] = 3000,
+        ["procs"] = 39156,
+        ["seed"] = 38000042,
+      }, {
+        ["eligible"] = 208681,
+        ["iterations"] = 3000,
+        ["procs"] = 38490,
+        ["seed"] = 39000042,
       } },
     },
     ["enh60-windfury-dw26-29"] = {
@@ -162,6 +462,156 @@ return {
         ["iterations"] = 3000,
         ["procs"] = 32788,
         ["seed"] = 9000042,
+      }, {
+        ["eligible"] = 170246,
+        ["iterations"] = 3000,
+        ["procs"] = 32229,
+        ["seed"] = 10000042,
+      }, {
+        ["eligible"] = 171043,
+        ["iterations"] = 3000,
+        ["procs"] = 32618,
+        ["seed"] = 11000042,
+      }, {
+        ["eligible"] = 171586,
+        ["iterations"] = 3000,
+        ["procs"] = 32541,
+        ["seed"] = 12000042,
+      }, {
+        ["eligible"] = 170937,
+        ["iterations"] = 3000,
+        ["procs"] = 32708,
+        ["seed"] = 13000042,
+      }, {
+        ["eligible"] = 170711,
+        ["iterations"] = 3000,
+        ["procs"] = 32732,
+        ["seed"] = 14000042,
+      }, {
+        ["eligible"] = 170815,
+        ["iterations"] = 3000,
+        ["procs"] = 32600,
+        ["seed"] = 15000042,
+      }, {
+        ["eligible"] = 171190,
+        ["iterations"] = 3000,
+        ["procs"] = 32753,
+        ["seed"] = 16000042,
+      }, {
+        ["eligible"] = 171000,
+        ["iterations"] = 3000,
+        ["procs"] = 32828,
+        ["seed"] = 17000042,
+      }, {
+        ["eligible"] = 170669,
+        ["iterations"] = 3000,
+        ["procs"] = 32649,
+        ["seed"] = 18000042,
+      }, {
+        ["eligible"] = 171013,
+        ["iterations"] = 3000,
+        ["procs"] = 32737,
+        ["seed"] = 19000042,
+      }, {
+        ["eligible"] = 170893,
+        ["iterations"] = 3000,
+        ["procs"] = 32629,
+        ["seed"] = 20000042,
+      }, {
+        ["eligible"] = 170563,
+        ["iterations"] = 3000,
+        ["procs"] = 32274,
+        ["seed"] = 21000042,
+      }, {
+        ["eligible"] = 170213,
+        ["iterations"] = 3000,
+        ["procs"] = 32336,
+        ["seed"] = 22000042,
+      }, {
+        ["eligible"] = 170800,
+        ["iterations"] = 3000,
+        ["procs"] = 32719,
+        ["seed"] = 23000042,
+      }, {
+        ["eligible"] = 170406,
+        ["iterations"] = 3000,
+        ["procs"] = 32493,
+        ["seed"] = 24000042,
+      }, {
+        ["eligible"] = 170756,
+        ["iterations"] = 3000,
+        ["procs"] = 32737,
+        ["seed"] = 25000042,
+      }, {
+        ["eligible"] = 171319,
+        ["iterations"] = 3000,
+        ["procs"] = 32734,
+        ["seed"] = 26000042,
+      }, {
+        ["eligible"] = 170975,
+        ["iterations"] = 3000,
+        ["procs"] = 32413,
+        ["seed"] = 27000042,
+      }, {
+        ["eligible"] = 170703,
+        ["iterations"] = 3000,
+        ["procs"] = 32516,
+        ["seed"] = 28000042,
+      }, {
+        ["eligible"] = 170676,
+        ["iterations"] = 3000,
+        ["procs"] = 32631,
+        ["seed"] = 29000042,
+      }, {
+        ["eligible"] = 170899,
+        ["iterations"] = 3000,
+        ["procs"] = 32262,
+        ["seed"] = 30000042,
+      }, {
+        ["eligible"] = 171062,
+        ["iterations"] = 3000,
+        ["procs"] = 32475,
+        ["seed"] = 31000042,
+      }, {
+        ["eligible"] = 170456,
+        ["iterations"] = 3000,
+        ["procs"] = 32450,
+        ["seed"] = 32000042,
+      }, {
+        ["eligible"] = 170788,
+        ["iterations"] = 3000,
+        ["procs"] = 32561,
+        ["seed"] = 33000042,
+      }, {
+        ["eligible"] = 170566,
+        ["iterations"] = 3000,
+        ["procs"] = 32732,
+        ["seed"] = 34000042,
+      }, {
+        ["eligible"] = 171281,
+        ["iterations"] = 3000,
+        ["procs"] = 32849,
+        ["seed"] = 35000042,
+      }, {
+        ["eligible"] = 170511,
+        ["iterations"] = 3000,
+        ["procs"] = 32551,
+        ["seed"] = 36000042,
+      }, {
+        ["eligible"] = 170363,
+        ["iterations"] = 3000,
+        ["procs"] = 32278,
+        ["seed"] = 37000042,
+      }, {
+        ["eligible"] = 170916,
+        ["iterations"] = 3000,
+        ["procs"] = 32864,
+        ["seed"] = 38000042,
+      }, {
+        ["eligible"] = 170484,
+        ["iterations"] = 3000,
+        ["procs"] = 32832,
+        ["seed"] = 39000042,
       } },
     },
   },
