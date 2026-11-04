@@ -1,0 +1,70 @@
+# foundry:start
+# Regenerable / throwaway folders. Their contents are ignored, not the folders, so
+# each folder's own .gitignore stays tracked and a fresh clone still has the folder.
+build/*
+!build/.gitignore
+release/*
+!release/.gitignore
+temp/*
+!temp/.gitignore
+wt/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Rust
+target/
+
+# Secrets
+.env
+*.pem
+*.key
+# foundry:end
+
+# Hone
+# Private working material: specs, plans, decisions and the Claude/foundry setup stay local
+specs/
+docs/
+CLAUDE.md
+AGENTS.md
+.claude/
+
+# Only WoW addon unit tests and frozen reference fixtures are public
+tests/*
+!tests/addon/
+!tests/fixtures/
+
+# Claude Code per-user settings and lane worktrees
+.claude/settings.local.json
+.claude/worktrees/
+
+# Pinned reference checkouts (MythicSim, WoWSims); the pin is recorded, not the source
+third_party/
+
+# Lua coverage output
+luacov.*.out
+
+# Addon packager staging (BigWigs packager)
+.release/
+
+# WoW client data copied in for debugging
+WTF/
+*.bak
+
+# Logs and Windows noise
+*.log
+desktop.ini
