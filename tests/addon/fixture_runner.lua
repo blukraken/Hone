@@ -6,21 +6,26 @@
 --
 -- An engine is a table with evaluate(input) -> { dps = n, weights = { [stat] = n } }.
 -- An engine may also define prepare(fixtures), called once before the first evaluate.
--- Two stubs are built in until the real model exists.
+-- Built-in engines:
 --   identity   returns each fixture's own expected values, so every fixture passes
 --   perturbed  shifts one stat of each fixture past tolerance, so the run fails
+--   hone       Hone's engine through Hone/Engine/Contract.lua, one snapshot per fixture
+--              from tests/addon/engine/data/snapshots.lua
 --
--- Usage: lua tests/addon/fixture_runner.lua --engine identity|perturbed [options]
+-- Usage: lua tests/addon/fixture_runner.lua --engine identity|perturbed|hone [options]
 
 local USAGE = [[
 usage: lua tests/addon/fixture_runner.lua --engine NAME [options]
 
-  --engine NAME      identity | perturbed
+  --engine NAME      identity | perturbed | hone
   --fixtures DIR     directory of fixture JSON files (default: tests/fixtures beside this script)
   --tolerance REL    relative tolerance used when a fixture's tolerance is null (default 1e-6)
+  --iterations N     hone only: fights per evaluation (default: the fixture's own count)
+  --report           also print each fixture's dps and weights beside the reference
   --help             show this text
 
-exit codes: 0 all fixtures pass, 1 at least one mismatch, 2 usage or load error
+exit codes: 0 all fixtures pass, 1 at least one mismatch, 2 usage or load error,
+            3 the engine raised a Lua error
 ]]
 
 local DEFAULT_TOLERANCE = 1e-6
@@ -241,7 +246,43 @@ local function make_stub(shift)
   return engine
 end
 
+-- Hone's engine. Loads Hone/Engine the way the .toc will, then maps each fixture's input
+-- to the normalized snapshot captured for that fixture id.
+local function make_hone(opts)
+  local Loader = dofile(script_dir() .. "/engine/loader.lua")
+  local root = Loader.root()
+  local ns = Loader.load(root)
+  local snapshots = dofile(root .. "/tests/addon/engine/data/snapshots.lua")
+  local by_input = {}
+  local engine = {}
+
+  function engine.prepare(fixtures)
+    for _, fx in ipairs(fixtures) do
+      local snapshot = snapshots[fx.id]
+      if not snapshot then error("no snapshot for fixture " .. fx.id, 0) end
+      local encounter = fx.input.request.encounter
+      by_input[fx.input] = {
+        snapshot = snapshot,
+        scenario = {
+          seed = fx.output.seed,
+          iterations = opts.iterations or fx.output.iterations,
+          duration = encounter.duration,
+          durationVariation = encounter.durationVariation,
+        },
+      }
+    end
+  end
+
+  function engine.evaluate(input)
+    local case = by_input[input]
+    return ns.Engine.Contract.evaluate(case.snapshot, case.scenario)
+  end
+
+  return engine
+end
+
 local ENGINES = {
+  hone = make_hone,
   identity = function() return make_stub(nil) end,
   perturbed = function()
     -- Moves the first weight (alphabetical) well past any plausible tolerance.
@@ -255,6 +296,8 @@ local ENGINES = {
 ------------------------------------------------------------------------------
 -- Comparison
 ------------------------------------------------------------------------------
+
+local report
 
 local function within(got, want, rel)
   if type(got) ~= "number" or got ~= got then return false end
@@ -284,6 +327,33 @@ local function compare(fx, result, default_tol)
 end
 
 ------------------------------------------------------------------------------
+-- Report
+------------------------------------------------------------------------------
+
+-- One fixture's result beside its reference: dps, gap, weights, cap weights, coverage.
+report = function(fx, result)
+  local want = fx.output
+  local gap = (result.dps - want.dps) / want.dps * 100
+  print(string.format("REPORT %s dps %.1f reference %.1f (stdev %.1f) gap %+.1f%%",
+    fx.id, result.dps, want.dps, want.dps_stdev or 0, gap))
+  local weights = type(result.weights) == "table" and result.weights or {}
+  for _, stat in ipairs(sorted_keys(want.weights)) do
+    print(string.format("REPORT %s   weight %-13s %9.4f reference %9.4f", fx.id, stat,
+      weights[stat] or 0 / 0, want.weights[stat]))
+  end
+  local caps = type(result.capWeights) == "table" and result.capWeights or {}
+  for _, stat in ipairs(sorted_keys(caps)) do
+    local cw = caps[stat]
+    print(string.format("REPORT %s   cap    %-13s below %.4f above %.4f (value %s cap %s)",
+      fx.id, stat, cw.below, cw.above, tostring(cw.value), tostring(cw.cap)))
+  end
+  if type(result.coverage) == "table" then
+    print(string.format("REPORT %s   coverage complete=%s unmodeled=%s", fx.id,
+      tostring(result.coverage.complete), table.concat(result.coverage.unmodeled or {}, ",")))
+  end
+end
+
+------------------------------------------------------------------------------
 -- Main
 ------------------------------------------------------------------------------
 
@@ -294,11 +364,16 @@ local function parse_args(argv)
     local a = argv[i]
     if a == "--help" or a == "-h" then
       opts.help = true
-    elseif a == "--engine" or a == "--fixtures" or a == "--tolerance" then
+    elseif a == "--report" then
+      opts.report = true
+    elseif a == "--engine" or a == "--fixtures" or a == "--tolerance" or a == "--iterations" then
       i = i + 1
       if not argv[i] then return nil, a .. " needs a value" end
       if a == "--engine" then opts.engine = argv[i]
       elseif a == "--fixtures" then opts.fixtures = argv[i]
+      elseif a == "--iterations" then
+        opts.iterations = tonumber(argv[i])
+        if not opts.iterations then return nil, "--iterations needs a number" end
       else
         opts.tolerance = tonumber(argv[i])
         if not opts.tolerance then return nil, "--tolerance needs a number" end
@@ -341,17 +416,29 @@ local function main()
     return 2
   end
 
-  local engine = factory()
-  if engine.prepare then engine.prepare(fixtures) end
+  local built, engine = pcall(factory, opts)
+  if built and engine.prepare then
+    built, engine = pcall(function()
+      engine.prepare(fixtures)
+      return engine
+    end)
+  end
+  if not built then
+    io.stderr:write("error: engine ", opts.engine, ": ", tostring(engine), "\n")
+    return 3
+  end
 
-  local failed = 0
+  local failed, errored = 0, 0
   for _, fx in ipairs(fixtures) do
-    local ran, result = pcall(engine.evaluate, fx.input)
+    local ran, result = xpcall(function() return engine.evaluate(fx.input) end, debug.traceback)
     local failures
     if ran then
       failures = compare(fx, result, opts.tolerance)
+      if opts.report then report(fx, result) end
     else
-      failures = { { stat = "evaluate", want = "result", got = tostring(result) } }
+      errored = errored + 1
+      print(string.format("ERROR %s %s", fx.id, tostring(result)))
+      failures = { { stat = "evaluate", want = "result", got = "Lua error" } }
     end
     if #failures == 0 then
       print(string.format("PASS %s", fx.id))
@@ -366,6 +453,7 @@ local function main()
 
   print(string.format("%d fixtures, %d passed, %d failed (engine %s)",
     #fixtures, #fixtures - failed, failed, opts.engine))
+  if errored > 0 then return 3 end
   return failed == 0 and 0 or 1
 end
 
