@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Runs MythicSim's check on an Enhancement build across character and target levels (A1).
+
+The request path pins the player at level 60, so levels are set by editing the player.level
+and target.level fields of a prepared v2 file that MythicSim ships.
+
+Usage  python3 scripts/fixtures/probe-levels
+Needs  the engine built by scripts/fixtures/build-fixtures.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CHECKOUT = os.path.join(ROOT, "third_party", "mythicsim-forever-engine")
+EXE = os.path.join(CHECKOUT, "target", "release",
+                   "forever-engine.exe" if os.name == "nt" else "forever-engine")
+SAMPLE = os.path.join(CHECKOUT, "fixtures", "mage", "prepared-v2",
+                      "production-enhancement-shaman.prepared.json")
+
+
+def check(prepared, tmp):
+    path = os.path.join(tmp, "p.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(prepared, fh)
+    res = subprocess.run([EXE, "check", "--infile", path], capture_output=True, text=True)
+    if res.returncode != 0:
+        return "error: " + res.stderr.strip()
+    report = json.loads(res.stdout)
+    return "accepted" if report["supported"] else "refused: " + "; ".join(report["reasons"])
+
+
+def main():
+    with open(SAMPLE, encoding="utf-8") as fh:
+        base = json.load(fh)
+    print("engine:", subprocess.run([EXE, "version"], capture_output=True, text=True).stdout.strip())
+    print("sample:", os.path.relpath(SAMPLE, CHECKOUT).replace(os.sep, "/"))
+    spells = {}
+    for sp in base["player"]["spells"]:
+        spells.setdefault(sp.get("class_spell") or sp.get("name") or "?", set()).add(sp.get("rank", 0))
+    with tempfile.TemporaryDirectory() as tmp:
+        print("\nplayer level  (target level 63)")
+        for lvl in (10, 20, 30, 40, 50, 60):
+            prepared = json.loads(json.dumps(base))
+            prepared["player"]["level"] = lvl
+            print("  %2d  %s" % (lvl, check(prepared, tmp)))
+        print("\ntarget level  (player level 60)")
+        for lvl in (58, 59, 60, 61, 62, 63, 64):
+            prepared = json.loads(json.dumps(base))
+            prepared["target"]["level"] = lvl
+            print("  %2d  %s" % (lvl, check(prepared, tmp)))
+    print("\nspell ranks present in the level 60 sample (rank 0 = unranked)")
+    for name in sorted(spells):
+        if max(spells[name]) > 0:
+            print("  %-28s ranks %s" % (name, sorted(spells[name])))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

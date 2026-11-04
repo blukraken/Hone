@@ -1,0 +1,427 @@
+{
+  "id": "enh60-rockbiter-dw29-hit97",
+  "pin": "8e9b8df69ef9b27f16c23b51e1bb1686bd9f1d68",
+  "evidence_class": "synthetic",
+  "command": [
+    "forever-engine prepare --request REQUEST.json --go-rules --outfile PREPARED.json",
+    "forever-engine check --infile PREPARED.json",
+    "forever-engine sim --infile PREPARED.json --gate --outfile RESULT.json"
+  ],
+  "input": {
+    "source": "fixtures/mage/prepared-v2/enhancement-shaman-preset-grace-of-air.request.json",
+    "source_sha256": "9e9ed079c62a7fa639ecddfa3ce86d58f7cb223c29dc1bbd19dd1f31b39947fc",
+    "edits": {},
+    "player_level": 60,
+    "target_level": 63,
+    "request": {
+      "encounter": {
+        "duration": 120,
+        "durationVariation": 15,
+        "executeProportion20": 0.2,
+        "executeProportion25": 0.25,
+        "executeProportion35": 0.35,
+        "executeProportion45": 0.45,
+        "executeProportion90": 0.9,
+        "targets": [
+          {
+            "canCrush": true,
+            "damageSpread": 0.3333,
+            "id": 213336,
+            "level": 63,
+            "minBaseDamage": 3000,
+            "name": "Level 60",
+            "parryHaste": true,
+            "stats": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              805,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              3731,
+              0,
+              127393,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "swingSpeed": 2
+          }
+        ]
+      },
+      "raid": {
+        "buffs": {
+          "arcaneBrilliance": true,
+          "fireResistanceAura": true,
+          "fireResistanceTotem": true,
+          "giftOfTheWild": true,
+          "prayerOfFortitude": true,
+          "prayerOfSpirit": true
+        },
+        "debuffs": {
+          "curseOfRecklessness": true,
+          "exposeArmor": true,
+          "faerieFire": true,
+          "judgementOfWisdom": true,
+          "sunderArmor": true
+        },
+        "parties": [
+          {
+            "buffs": {
+              "battleShout": "TristateEffectRegular",
+              "leaderOfThePack": true,
+              "manaSpringTotem": "TristateEffectRegular",
+              "windfuryTotem": true
+            },
+            "players": [
+              {
+                "buffs": {
+                  "greaterBlessingOfKings": true,
+                  "greaterBlessingOfMight": true,
+                  "greaterBlessingOfWisdom": true
+                },
+                "class": "ClassShaman",
+                "consumables": {
+                  "attackPowerBuffId": 12460,
+                  "battleElixirId": 13452,
+                  "conjuredId": 12662,
+                  "conjuredItems": [
+                    12662
+                  ],
+                  "dragonbreathChili": true,
+                  "flaskId": 13512,
+                  "foodId": 13810,
+                  "guardianElixirId": 20007,
+                  "potId": 13444,
+                  "potions": [
+                    13444
+                  ],
+                  "schoolElixirId": 6373,
+                  "spellPowerElixirId": 13454,
+                  "strengthBuffId": 12451,
+                  "zanzaId": 8410
+                },
+                "enhancementShaman": {
+                  "options": {
+                    "classOptions": {
+                      "imbueMh": "RockbiterWeapon"
+                    },
+                    "imbueOh": "NoImbue",
+                    "syncType": "Auto"
+                  }
+                },
+                "equipment": {
+                  "items": [
+                    {
+                      "id": 22005
+                    },
+                    {
+                      "id": 18404
+                    },
+                    {
+                      "id": 12927
+                    },
+                    {
+                      "id": 272414
+                    },
+                    {
+                      "id": 252484
+                    },
+                    {
+                      "id": 19587
+                    },
+                    {
+                      "id": 227159
+                    },
+                    {
+                      "id": 227805
+                    },
+                    {
+                      "id": 22673
+                    },
+                    {
+                      "id": 14616
+                    },
+                    {
+                      "id": 19325
+                    },
+                    {
+                      "id": 234021
+                    },
+                    {
+                      "id": 13965
+                    },
+                    {
+                      "id": 19120
+                    },
+                    {
+                      "id": 23199
+                    },
+                    {
+                      "id": 272592
+                    },
+                    {
+                      "id": 272598
+                    }
+                  ]
+                },
+                "name": "enhancement-shaman",
+                "profession1": "Engineering",
+                "race": "RaceOrc",
+                "reactionTimeMs": 100,
+                "rotation": {
+                  "type": "TypeAPL",
+                  "prepullActions": [
+                    {
+                      "action": {
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 25361
+                          }
+                        }
+                      },
+                      "doAtValue": {
+                        "const": {
+                          "val": "-4.5s"
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 25359
+                          }
+                        }
+                      },
+                      "doAtValue": {
+                        "const": {
+                          "val": "-3s"
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 10438
+                          }
+                        }
+                      },
+                      "doAtValue": {
+                        "const": {
+                          "val": "-1.5s"
+                        }
+                      }
+                    }
+                  ],
+                  "priorityList": [
+                    {
+                      "action": {
+                        "condition": {
+                          "cmp": {
+                            "op": "OpLe",
+                            "lhs": {
+                              "totemRemainingTime": {
+                                "totemType": "Earth"
+                              }
+                            },
+                            "rhs": {
+                              "const": {
+                                "val": "0s"
+                              }
+                            }
+                          }
+                        },
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 25361
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "condition": {
+                          "cmp": {
+                            "op": "OpLe",
+                            "lhs": {
+                              "totemRemainingTime": {
+                                "totemType": "Air"
+                              }
+                            },
+                            "rhs": {
+                              "const": {
+                                "val": "0s"
+                              }
+                            }
+                          }
+                        },
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 25359
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "autocastOtherCooldowns": {}
+                      }
+                    },
+                    {
+                      "action": {
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 17364
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "condition": {
+                          "cmp": {
+                            "op": "OpGe",
+                            "lhs": {
+                              "auraNumStacks": {
+                                "auraId": {
+                                  "spellId": 408505
+                                }
+                              }
+                            },
+                            "rhs": {
+                              "const": {
+                                "val": "5"
+                              }
+                            }
+                          }
+                        },
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 15208
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "condition": {
+                          "and": {
+                            "vals": [
+                              {
+                                "cmp": {
+                                  "op": "OpLe",
+                                  "lhs": {
+                                    "totemRemainingTime": {
+                                      "totemType": "Fire"
+                                    }
+                                  },
+                                  "rhs": {
+                                    "const": {
+                                      "val": "0s"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "cmp": {
+                                  "op": "OpGe",
+                                  "lhs": {
+                                    "remainingTime": {}
+                                  },
+                                  "rhs": {
+                                    "const": {
+                                      "val": "20s"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 10438
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "action": {
+                        "castSpell": {
+                          "spellId": {
+                            "spellId": 10414
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "talentsString": "5505031-053030031005112251"
+              }
+            ]
+          }
+        ]
+      },
+      "simOptions": {
+        "debugFirstIteration": true,
+        "iterations": 1000,
+        "randomSeed": "42"
+      }
+    }
+  },
+  "check": {
+    "supported": true,
+    "reasons": []
+  },
+  "output": {
+    "dps": 614.14209,
+    "dps_stdev": 41.295576,
+    "dps_min": 488.821755,
+    "dps_max": 749.542356,
+    "iterations": 1000,
+    "seed": 42,
+    "engine": "forever-rust-prototype-0.1.0 source-a667dce8492bd9fb94269a9f864289cb74006775",
+    "weights": {
+      "strength": 0.346754,
+      "agility": 0.086525,
+      "intellect": 0.264674,
+      "attack_power": 0.157615,
+      "hit_rating": 0.494721,
+      "crit_rating": 0.099835,
+      "haste_rating": 0.415573
+    },
+    "weights_method": "derived: sim repeated with bonusStats +100 on one stat, same seed; weight = (dps_plus - dps_base) / 100. MythicSim's CLI reports no weights."
+  },
+  "tolerance": null
+}

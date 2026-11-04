@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Regenerates tests/fixtures/*.json from the MythicSim commit named in tests/fixtures/PIN.
+
+Steps
+  1. Clone third_party/mythicsim-forever-engine if missing and check out the pinned commit.
+  2. Verify HEAD equals the pin and the LICENSE is MIT.
+  3. cargo build --release --locked.
+  4. For each configuration run prepare, check and sim, then record the result.
+  5. Run the sim again with bonus stats added, one stat at a time, and record the
+     DPS change per point as the weight. MythicSim's CLI reports no weights itself.
+
+Usage  python3 scripts/fixtures/build-fixtures [--skip-build]
+Needs  git, cargo, python 3.8+. Standard library only.
+"""
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+PIN_FILE = os.path.join(ROOT, "tests", "fixtures", "PIN")
+OUT_DIR = os.path.join(ROOT, "tests", "fixtures")
+CHECKOUT = os.path.join(ROOT, "third_party", "mythicsim-forever-engine")
+EXE = os.path.join(
+    CHECKOUT, "target", "release",
+    "forever-engine.exe" if os.name == "nt" else "forever-engine",
+)
+
+EXAMPLES = "fixtures/mage/prepared-v2/"
+
+# Each entry is one fixture. "target_level" edits the request; all others run as shipped.
+CONFIGS = [
+    {
+        "id": "enh60-rockbiter-2h38-hitcap",
+        "request": "production-enhancement-shaman.request.json",
+    },
+    {
+        "id": "enh60-windfury-dw26-29",
+        "request": "enhancement-shaman-dual-wield-windfury-flametongue.request.json",
+    },
+    {
+        "id": "enh60-rockbiter-dw29-hit97",
+        "request": "enhancement-shaman-preset-grace-of-air.request.json",
+    },
+    {
+        "id": "enh60-windfury-dw20-29",
+        "request": "enhancement-shaman-iceblade-hacker.request.json",
+    },
+    {
+        "id": "enh60-rockbiter-2h38-vs60",
+        "request": "production-enhancement-shaman.request.json",
+        "target_level": 60,
+    },
+]
+
+# Weight stats: name -> index in the request's bonusStats array (proto.Stat order).
+WEIGHT_STATS = {
+    "strength": 0,
+    "agility": 1,
+    "intellect": 3,
+    "attack_power": 17,
+    "hit_rating": 20,
+    "crit_rating": 21,
+    "haste_rating": 22,
+}
+WEIGHT_DELTA = 100
+PROTO_STATS_LEN = 41
+
+
+def run(cmd, cwd=None, capture=False):
+    res = subprocess.run(cmd, cwd=cwd, text=True, capture_output=capture)
+    if res.returncode != 0:
+        sys.exit("command failed (%d): %s\n%s" % (
+            res.returncode, " ".join(cmd), (res.stderr or "") if capture else ""))
+    return res.stdout if capture else ""
+
+
+def read_pin():
+    pin = {}
+    with open(PIN_FILE, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                key, _, val = line.partition("=")
+                pin[key.strip()] = val.strip()
+    return pin
+
+
+def ensure_checkout(pin):
+    if not os.path.isdir(os.path.join(CHECKOUT, ".git")):
+        os.makedirs(os.path.dirname(CHECKOUT), exist_ok=True)
+        run(["git", "clone", pin["repo"], CHECKOUT])
+    head = run(["git", "-C", CHECKOUT, "rev-parse", "HEAD"], capture=True).strip()
+    if head != pin["commit"]:
+        run(["git", "-C", CHECKOUT, "checkout", "--quiet", pin["commit"]])
+        head = run(["git", "-C", CHECKOUT, "rev-parse", "HEAD"], capture=True).strip()
+    if head != pin["commit"]:
+        sys.exit("checkout is at %s, pin is %s" % (head, pin["commit"]))
+    with open(os.path.join(CHECKOUT, "LICENSE"), encoding="utf-8") as fh:
+        if not fh.read().lstrip().startswith("MIT License"):
+            sys.exit("LICENSE at the pin is not MIT; stop and escalate")
+
+
+def engine(args, **kw):
+    return run([EXE] + args, **kw)
+
+
+def prepare_and_sim(request, tmp, name):
+    """Returns (check_report, sim_result) for a request dict."""
+    req_path = os.path.join(tmp, name + ".request.json")
+    prep_path = os.path.join(tmp, name + ".prepared.json")
+    out_path = os.path.join(tmp, name + ".result.json")
+    with open(req_path, "w", encoding="utf-8") as fh:
+        json.dump(request, fh)
+    engine(["prepare", "--request", req_path, "--go-rules", "--outfile", prep_path])
+    if not os.path.exists(prep_path):
+        sys.exit("prepare refused %s" % name)
+    check = json.loads(engine(["check", "--infile", prep_path], capture=True))
+    if not check.get("supported"):
+        sys.exit("check refused %s: %s" % (name, check.get("reasons")))
+    engine(["sim", "--infile", prep_path, "--gate", "--outfile", out_path])
+    with open(out_path, encoding="utf-8") as fh:
+        return check, json.load(fh)
+
+
+def with_bonus(request, index, amount):
+    req = json.loads(json.dumps(request))
+    player = req["raid"]["parties"][0]["players"][0]
+    stats = (player.get("bonusStats") or {}).get("stats") or [0] * PROTO_STATS_LEN
+    stats = list(stats) + [0] * (PROTO_STATS_LEN - len(stats))
+    stats[index] += amount
+    player["bonusStats"] = {"stats": stats}
+    return req
+
+
+def round_to(x, n=6):
+    return round(float(x), n)
+
+
+def main():
+    skip_build = "--skip-build" in sys.argv
+    pin = read_pin()
+    ensure_checkout(pin)
+    if not skip_build:
+        run(["cargo", "build", "--release", "--locked"], cwd=CHECKOUT)
+    version = engine(["version"], capture=True).strip()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for cfg in CONFIGS:
+            src_rel = EXAMPLES + cfg["request"]
+            with open(os.path.join(CHECKOUT, src_rel), "rb") as fh:
+                raw = fh.read()
+            request = json.loads(raw)
+            if "target_level" in cfg:
+                request["encounter"]["targets"][0]["level"] = cfg["target_level"]
+
+            check, base = prepare_and_sim(request, tmp, "base")
+            result = base["result"]
+            dps = result["raidMetrics"]["dps"]
+            sim_opts = request["simOptions"]
+            base_avg = dps["avg"]
+
+            weights = {}
+            for stat, idx in WEIGHT_STATS.items():
+                _, plus = prepare_and_sim(with_bonus(request, idx, WEIGHT_DELTA), tmp, "plus")
+                weights[stat] = round_to(
+                    (plus["result"]["raidMetrics"]["dps"]["avg"] - base_avg) / WEIGHT_DELTA)
+
+            fixture = {
+                "id": cfg["id"],
+                "pin": pin["commit"],
+                "evidence_class": "synthetic",
+                "command": [
+                    "forever-engine prepare --request REQUEST.json --go-rules --outfile PREPARED.json",
+                    "forever-engine check --infile PREPARED.json",
+                    "forever-engine sim --infile PREPARED.json --gate --outfile RESULT.json",
+                ],
+                "input": {
+                    "source": src_rel,
+                    "source_sha256": hashlib.sha256(raw).hexdigest(),
+                    "edits": ({"encounter.targets[0].level": cfg["target_level"]}
+                              if "target_level" in cfg else {}),
+                    "player_level": 60,
+                    "target_level": request["encounter"]["targets"][0]["level"],
+                    "request": request,
+                },
+                "check": {"supported": check["supported"], "reasons": check["reasons"]},
+                "output": {
+                    "dps": round_to(base_avg),
+                    "dps_stdev": round_to(dps["stdev"]),
+                    "dps_min": round_to(dps["min"]),
+                    "dps_max": round_to(dps["max"]),
+                    "iterations": result["iterationsDone"],
+                    "seed": int(sim_opts["randomSeed"]),
+                    "engine": version,
+                    "weights": weights,
+                    "weights_method": (
+                        "derived: sim repeated with bonusStats +%d on one stat, same seed; "
+                        "weight = (dps_plus - dps_base) / %d. MythicSim's CLI reports no weights."
+                        % (WEIGHT_DELTA, WEIGHT_DELTA)),
+                },
+                "tolerance": None,
+            }
+            path = os.path.join(OUT_DIR, cfg["id"] + ".json")
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(fixture, fh, indent=2)
+                fh.write("\n")
+            print("%-32s dps=%.4f stdev=%.4f weights=%s" % (
+                cfg["id"], base_avg, dps["stdev"], json.dumps(weights)))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Installs Lua 5.1.5 into build/lua/ without admin rights.
+#
+# Linux/macOS (incl. ubuntu-latest) builds the official source tarball with cc/make.
+# Windows (Git Bash) unpacks the LuaBinaries 5.1.5 zip.
+# Both downloads are checked against pinned SHA-256 sums.
+#
+# Result: build/lua/bin/lua (build/lua/bin/lua.exe on Windows).
+# Usage:  scripts/fixtures/setup-lua [--force]
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DEST="$ROOT/build/lua"
+TMP="$ROOT/temp/setup-lua"
+
+SRC_URL="https://www.lua.org/ftp/lua-5.1.5.tar.gz"
+SRC_SHA="2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333"
+WIN_URL="https://downloads.sourceforge.net/project/luabinaries/5.1.5/Tools%20Executables/lua-5.1.5_Win64_bin.zip"
+WIN_SHA="5f34cf7d40a20a587ea351482a4207d93b92ef6f1983e910a13338253819fe93"
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) WINDOWS=1; LUA="$DEST/bin/lua.exe" ;;
+  *)                    WINDOWS=0; LUA="$DEST/bin/lua" ;;
+esac
+
+if [ "${1:-}" != "--force" ] && [ -x "$LUA" ]; then
+  echo "lua already installed at $LUA"
+  "$LUA" -v
+  exit 0
+fi
+
+fetch() { # url sha out
+  curl -fsSL --retry 3 -o "$3" "$1"
+  echo "$2  $3" | sha256sum -c -
+}
+
+rm -rf "$TMP" "$DEST"
+mkdir -p "$TMP" "$DEST/bin"
+
+if [ "$WINDOWS" = 1 ]; then
+  fetch "$WIN_URL" "$WIN_SHA" "$TMP/lua.zip"
+  unzip -q -o "$TMP/lua.zip" -d "$TMP/x"
+  cp -r "$TMP/x/." "$DEST/bin/"
+  cp "$DEST/bin/lua5.1.exe" "$LUA"
+else
+  fetch "$SRC_URL" "$SRC_SHA" "$TMP/lua.tar.gz"
+  tar -xzf "$TMP/lua.tar.gz" -C "$TMP"
+  PLAT=linux
+  [ "$(uname -s)" = Darwin ] && PLAT=macosx
+  make -C "$TMP/lua-5.1.5" "$PLAT" >/dev/null
+  make -C "$TMP/lua-5.1.5" install INSTALL_TOP="$DEST" >/dev/null
+fi
+
+rm -rf "$TMP"
+echo "installed: $LUA"
+"$LUA" -v

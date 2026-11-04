@@ -1,0 +1,4 @@
+# MythicSim pin read by scripts/fixtures/build-fixtures. Change only with a deliberate re-pin.
+repo=https://github.com/sage3648/mythicsim-forever-engine
+commit=8e9b8df69ef9b27f16c23b51e1bb1686bd9f1d68
+license=MIT
