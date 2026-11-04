@@ -1,10 +1,12 @@
--- T1: Windfury Weapon proc rate, Hone's Lua rule against MythicSim at the pin.
+-- Windfury Weapon proc rate on the event path, against MythicSim at the pin.
 --
 -- Proc rate = Windfury procs / eligible swings, where an eligible swing is a landed hit the
 -- Windfury trigger hears (main hand autos and Stormstrike's main hand strike), not counting
--- Windfury's own strikes. Both sides run independent batches of fights; each side's
--- standard error is the spread of its batch rates over sqrt(batches). The case passes when
--- |rate_hone - rate_mythicsim| < 2 * sqrt(se_hone^2 + se_mythicsim^2).
+-- Windfury's own strikes. Both sides run independent batches of fights and pool them: the rate
+-- is total procs over total eligible swings, and each side's standard error is the spread of
+-- its batch rates over sqrt(batches). z = (rate_hone - rate_mythicsim) / sqrt(se_hone^2 +
+-- se_mythicsim^2), and a case passes when |z| <= 2. The per-fight cast counts beside it locate
+-- any gap.
 --
 -- MythicSim's counts are captured by tests/addon/engine/capture_mythicsim.py into
 -- tests/addon/engine/data/windfury_mythicsim.lua.
@@ -16,8 +18,7 @@ local Loader = dofile((arg[0]:gsub("[^/\\]+$", "")) .. "loader.lua")
 local root = Loader.root()
 local ns = Loader.load(root)
 local Engine = ns.Engine
-local Enhancement = Engine.Classes.Shaman.Enhancement
-local WindfuryWeapon = Engine.Classes.Shaman.WindfuryWeapon
+local EventSim = Engine.Classes.Shaman.EventSim
 local Data = Engine.Classes.Shaman.Data
 local Rng = Engine.Core.Rng
 
@@ -27,7 +28,7 @@ local reference = dofile(root .. "/tests/addon/engine/data/windfury_mythicsim.lu
 local CASES = { "enh60-windfury-dw20-29", "enh60-windfury-dw26-29", "enh60-windfury-2h38-hitcap" }
 local SEED_BASE = 7000
 
-local batches, iterations = 10, 3000
+local batches, iterations = 20, 3000
 for i = 1, #arg do
   if arg[i] == "--batches" then batches = tonumber(arg[i + 1]) end
   if arg[i] == "--iterations" then iterations = tonumber(arg[i + 1]) end
@@ -63,20 +64,20 @@ local ACTIONS = {
   { "mainHand", '{"otherId": "OtherActionAttack", "tag": 1}' },
   { "offHand", '{"otherId": "OtherActionAttack", "tag": 2}' },
   { "stormstrike", '{"spellId": 17364}' },
-  { "stormstrikeStrike", '{"spellId": 17364, "tag": 1}' },
-  { "lavaLash", '{"spellId": 408345}' },
+  { "stormstrikeMainHand", '{"spellId": 17364, "tag": 1}' },
+  { "fireNova", '{"spellId": 408345}' },
   { "lightningBolt", '{"spellId": 15208}' },
 }
 
 local function honeRuns(snapshot)
-  local char = Enhancement.derive(snapshot)
+  local char = EventSim.character(snapshot)
   local scenario = { duration = 120, durationVariation = 15 }
   local runs, totals = {}, {}
   for k = 1, batches do
     local rng = Rng.new(SEED_BASE + k)
-    local _, rule, counts = Enhancement.run(char, scenario, rng, iterations)
+    local _, rule, tally = EventSim.run(char, scenario, rng, iterations)
     runs[k] = { procs = rule.procs, eligible = rule.eligible, rolls = rule.rolls, iterations = iterations }
-    for name, n in pairs(counts) do totals[name] = (totals[name] or 0) + n end
+    for name, row in pairs(tally) do totals[name] = (totals[name] or 0) + row.casts end
   end
   return runs, totals
 end
@@ -92,7 +93,7 @@ for _, id in ipairs(CASES) do
   local snapshot = assert(snapshots[id], "no snapshot for " .. id)
   local ref = assert(reference.cases[id], "no MythicSim capture for " .. id)
 
-  local ap = WindfuryWeapon.attackPower(snapshot.talents)
+  local ap = snapshot.model.spells.windfury.attackPower
   local apRef = snapshot.reference.windfuryAttackPower
   local apOk = math.abs(ap - apRef) < 1e-6
 
@@ -102,7 +103,7 @@ for _, id in ipairs(CASES) do
   local diff = h.rate - m.rate
   local seDiff = math.sqrt(h.se ^ 2 + m.se ^ 2)
   local z = diff / seDiff
-  local pass = apOk and math.abs(diff) < 2 * seDiff
+  local pass = apOk and math.abs(z) <= 2
 
   print(id)
   print(string.format("  strike attack power  hone %.1f  mythicsim %.1f  %s", ap, apRef, apOk and "match" or "MISMATCH"))
@@ -117,7 +118,8 @@ for _, id in ipairs(CASES) do
     print(string.format("  per fight %-18s hone %7.3f  mythicsim %7.3f", a[1],
       (totals[a[1]] or 0) / (batches * iterations), perFight[a[2]] or 0))
   end
-  print(string.format("  diff %+.5f  se_diff %.5f  |z| %.2f  limit 2.00  %s", diff, seDiff, math.abs(z),
+  print(string.format("  diff %+.5f (%+.2f%%)  se_diff %.5f  z %+.2f  limit |z| <= 2  %s", diff, diff / m.rate * 100,
+    seDiff, z,
     pass and "PASS" or "FAIL"))
   print("")
   if not pass then failed = failed + 1 end

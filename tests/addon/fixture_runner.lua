@@ -12,6 +12,11 @@
 --   hone       Hone's engine through Hone/Engine/Contract.lua, one snapshot per fixture
 --              from tests/addon/engine/data/snapshots.lua
 --
+-- With --report the hone engine is judged by T1's pooled comparison instead: per fixture it
+-- runs --batches evaluations on seeds BATCH_SEED + k, pools their weights, and compares them
+-- with MythicSim's pooled samples (tests/addon/engine/compare.lua). It prints per-stat
+-- agreement, stat order and CPU milliseconds per evaluate from os.clock.
+--
 -- Usage: lua tests/addon/fixture_runner.lua --engine identity|perturbed|hone [options]
 
 local USAGE = [[
@@ -20,8 +25,13 @@ usage: lua tests/addon/fixture_runner.lua --engine NAME [options]
   --engine NAME      identity | perturbed | hone
   --fixtures DIR     directory of fixture JSON files (default: tests/fixtures beside this script)
   --tolerance REL    relative tolerance used when a fixture's tolerance is null (default 1e-6)
-  --iterations N     hone only: fights per evaluation (default: the fixture's own count)
-  --report           also print each fixture's dps and weights beside the reference
+  --iterations N     hone only: fights per evaluation (default: the fixture's own count,
+                     or 1500 with --report)
+  --path NAME        hone only: event | hybrid | formula (default event)
+  --report           hone: T1 pooled weight comparison, stat order and CPU per evaluate;
+                     other engines: each fixture's dps and weights beside the reference
+  --batches N        hone --report only: evaluations pooled per fixture (default 20)
+  --only ID          run only the fixture with this id (repeatable)
   --help             show this text
 
 exit codes: 0 all fixtures pass, 1 at least one mismatch, 2 usage or load error,
@@ -29,6 +39,9 @@ exit codes: 0 all fixtures pass, 1 at least one mismatch, 2 usage or load error,
 ]]
 
 local DEFAULT_TOLERANCE = 1e-6
+local REPORT_BATCHES = 20
+local REPORT_ITERATIONS = 1500
+local BATCH_SEED = 100000
 
 ------------------------------------------------------------------------------
 -- Minimal JSON decoder
@@ -268,6 +281,7 @@ local function make_hone(opts)
           iterations = opts.iterations or fx.output.iterations,
           duration = encounter.duration,
           durationVariation = encounter.durationVariation,
+          path = opts.path,
         },
       }
     end
@@ -276,6 +290,57 @@ local function make_hone(opts)
   function engine.evaluate(input)
     local case = by_input[input]
     return ns.Engine.Contract.evaluate(case.snapshot, case.scenario)
+  end
+
+  -- T1-method report: pooled weights over batches against MythicSim's pooled samples.
+  function engine.report(fx)
+    local Compare = dofile(root .. "/tests/addon/engine/compare.lua")
+    local ref = Compare.loadReference()
+    local mcase = ref.cases[fx.id]
+    if not mcase then error("no pooled MythicSim samples for " .. fx.id, 0) end
+    local case = by_input[fx.input]
+    local stats = ref.stats
+    local samples, cpu, dps = {}, 0, {}
+    for _, stat in ipairs(stats) do samples[stat] = {} end
+    local batches = opts.batches or REPORT_BATCHES
+    local scenario = {}
+    for k, v in pairs(case.scenario) do scenario[k] = v end
+    scenario.iterations = opts.iterations or REPORT_ITERATIONS
+    scenario.weightDelta = ref.delta
+    for k = 1, batches do
+      scenario.seed = BATCH_SEED + k
+      local t0 = os.clock()
+      local result = ns.Engine.Contract.evaluate(case.snapshot, scenario)
+      cpu = cpu + (os.clock() - t0)
+      dps[k] = result.dps
+      for _, stat in ipairs(stats) do samples[stat][k] = result.weights[stat] end
+    end
+    local r = Compare.fixture(samples, Compare.mythicsimSamples(mcase, ref.delta, stats), stats)
+    local d = Compare.summary(dps)
+    local mbase = Compare.summary(mcase.base)
+    r.cpuPerEvaluate = cpu / batches * 1000
+    Compare.printFixture(fx.id, r, stats)
+    print(string.format("  dps engine %.2f +- %.2f  mythicsim %.2f +- %.2f  gap %+.2f%%", d.mean, 1.96 * d.se,
+      mbase.mean, 1.96 * mbase.se, (d.mean - mbase.mean) / mbase.mean * 100))
+    print(string.format("  cpu %.1f ms per evaluate (%d fights x %d sims, %.4f ms per fight), %d batches",
+      r.cpuPerEvaluate, scenario.iterations, 1 + #stats, r.cpuPerEvaluate / (scenario.iterations * (1 + #stats)),
+      batches))
+    -- Fights one evaluate needs for every weight to sit within 3% of itself at 95%, from the
+    -- spread of the batch weights.
+    local need, worst = 0, "-"
+    for _, stat in ipairs(stats) do
+      local e, m = r.stats[stat].engine, r.stats[stat].reference
+      if m.mean ~= 0 and e.sd > 0 then
+        local n = scenario.iterations * (1.96 * e.sd / (0.03 * math.abs(m.mean))) ^ 2
+        if n > need then need, worst = n, stat end
+      end
+    end
+    r.fightsFor3 = need
+    r.cpuFor3 = need * r.cpuPerEvaluate / scenario.iterations
+    print(string.format("  one evaluate within 3%% at 95%%: %.0f fights (set by %s), about %.0f ms",
+      need, worst, r.cpuFor3))
+    print("")
+    return r
   end
 
   return engine
@@ -366,11 +431,19 @@ local function parse_args(argv)
       opts.help = true
     elseif a == "--report" then
       opts.report = true
-    elseif a == "--engine" or a == "--fixtures" or a == "--tolerance" or a == "--iterations" then
+    elseif a == "--engine" or a == "--fixtures" or a == "--tolerance" or a == "--iterations"
+        or a == "--path" or a == "--batches" or a == "--only" then
       i = i + 1
       if not argv[i] then return nil, a .. " needs a value" end
       if a == "--engine" then opts.engine = argv[i]
       elseif a == "--fixtures" then opts.fixtures = argv[i]
+      elseif a == "--path" then opts.path = argv[i]
+      elseif a == "--only" then
+        opts.only = opts.only or {}
+        opts.only[argv[i]] = true
+      elseif a == "--batches" then
+        opts.batches = tonumber(argv[i])
+        if not opts.batches then return nil, "--batches needs a number" end
       elseif a == "--iterations" then
         opts.iterations = tonumber(argv[i])
         if not opts.iterations then return nil, "--iterations needs a number" end
@@ -411,8 +484,19 @@ local function main()
     io.stderr:write("error: ", tostring(fixtures), "\n")
     return 2
   end
+  if opts.only then
+    local kept = {}
+    for _, fx in ipairs(fixtures) do
+      if opts.only[fx.id] then kept[#kept + 1] = fx end
+    end
+    fixtures = kept
+  end
   if #fixtures == 0 then
     io.stderr:write("error: no fixtures found in ", opts.fixtures, "\n")
+    return 2
+  end
+  if (opts.path or opts.batches) and opts.engine ~= "hone" then
+    io.stderr:write("error: --path and --batches need --engine hone\n")
     return 2
   end
 
@@ -426,6 +510,28 @@ local function main()
   if not built then
     io.stderr:write("error: engine ", opts.engine, ": ", tostring(engine), "\n")
     return 3
+  end
+
+  if opts.report and engine.report then
+    local failed, errored, cpu, orders = 0, 0, {}, 0
+    print(string.format("T1-method report, engine hone, path %s", opts.path or "event"))
+    print("")
+    for _, fx in ipairs(fixtures) do
+      local ran, r = xpcall(function() return engine.report(fx) end, debug.traceback)
+      if not ran then
+        errored = errored + 1
+        print(string.format("ERROR %s %s", fx.id, tostring(r)))
+      else
+        if not r.pass then failed = failed + 1 end
+        if r.orderPass then orders = orders + 1 end
+        cpu[#cpu + 1] = string.format("%s %.0f ms (%.0f ms for 3%%)", fx.id, r.cpuPerEvaluate, r.cpuFor3)
+      end
+    end
+    print(string.format("%d fixtures, %d agree, %d disagree, stat order agrees on %d (path %s)",
+      #fixtures, #fixtures - failed - errored, failed + errored, orders, opts.path or "event"))
+    print("cpu per evaluate: " .. table.concat(cpu, ", "))
+    if errored > 0 then return 3 end
+    return failed == 0 and 0 or 1
   end
 
   local failed, errored = 0, 0
