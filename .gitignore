@@ -36,7 +36,9 @@ target/
 # foundry:end
 
 # Hone
-# Private working material: specs, plans, decisions and the Claude/foundry setup stay local
+# Private working material lives in a second repo (.git-private, GitHub blukraken/Hone-private)
+.git-private/
+# Specs, plans, decisions and the Claude/foundry setup
 specs/
 docs/
 CLAUDE.md
