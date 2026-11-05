@@ -38,10 +38,12 @@ ns.Engine.Core.Defaults = {
   stageMinBatches = 4,
 
   -- Variance of a stratified batch mean over (unstratified per-fight variance / batch size),
-  -- the floor under a simulated stat's batch variance (Core/Weights.lua, Stepper:estimate).
-  -- tests/addon/engine/stratification_gain.lua measures it per fixture and stat. This is the
-  -- largest fixture median (0.751) rounded up, so the floor errs wide.
+  -- the floor under a stat's batch variance (Core/Weights.lua, Stepper:estimate), one per kind.
+  -- tests/addon/engine/stratification_gain.lua measures it per fixture and stat. Each is the
+  -- largest fixture median of its kind rounded up (simulated 0.751, pathwise 0.214), so the
+  -- floor errs wide.
   stageStratificationGain = 0.76,
+  stagePathwiseGain = 0.22,
 
   -- Every half-width is t(stageQuantile, df) x se, a two-sided 95% interval at the estimate's
   -- own degrees of freedom.

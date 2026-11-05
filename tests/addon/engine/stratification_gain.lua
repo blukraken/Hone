@@ -6,11 +6,10 @@
 --   stratified    BATCHES batches of batch size fights on GAIN_SEED + k, stratified as stages
 --                 2 and 3 run them, the variance of the batch means
 -- and prints the ratio (batch-mean variance) / (s2 / batch size). A ratio under 1 is a gain
--- from stratification. Core/Defaults stageStratificationGain must be no stronger (no lower)
--- than the fixture median. The script reports each fixture's median over its simulated stats,
--- the median over every simulated (fixture, stat) pair, and the largest fixture median.
--- Pathwise stats are printed for reference and stay out of the medians, because the floor
--- only applies to simulated stats.
+-- from stratification. Simulated and pathwise stats get separate gains in Core/Defaults
+-- (stageStratificationGain and stagePathwiseGain), each no stronger (no lower) than the fixture
+-- median of its kind. Per kind the script reports each fixture's median, the median over every
+-- (fixture, stat) pair, and the largest fixture median rounded up to 2 places.
 --
 -- Usage: lua tests/addon/engine/stratification_gain.lua [BATCHES] [--only ID]
 
@@ -63,7 +62,9 @@ print("ratio = var(batch means) / (per-fight var / " .. size .. "); under 1 is a
   .. (batches - 1) .. " df")
 print("")
 
-local fixtureMedians, all = {}, {}
+local KINDS = { "simulated", "pathwise" }
+local GAIN_FIELDS = { simulated = "stageStratificationGain", pathwise = "stagePathwiseGain" }
+local fixtureMedians, all = { simulated = {}, pathwise = {} }, { simulated = {}, pathwise = {} }
 local t0 = os.clock()
 for _, id in ipairs(Harness.FIXTURES) do
   if not only or only == id then
@@ -81,7 +82,7 @@ for _, id in ipairs(Harness.FIXTURES) do
     print(id)
     print(string.format("  %-13s %-9s %12s %12s %12s %8s", "stat", "kind", "per-fight var", "var/" .. size,
       "batch var", "ratio"))
-    local ratios = {}
+    local ratios = { simulated = {}, pathwise = {} }
     for _, stat in ipairs(st.stats) do
       local kind = plan.kinds[stat]
       if kind ~= "zero" then
@@ -95,26 +96,28 @@ for _, id in ipairs(Harness.FIXTURES) do
         local ratio = batchVar / (perFight / size)
         print(string.format("  %-13s %-9s %12.6f %12.8f %12.8f %8.3f", stat, kind, perFight, perFight / size,
           batchVar, ratio))
-        if kind == "simulated" then
-          ratios[#ratios + 1] = ratio
-          all[#all + 1] = ratio
-        end
+        local list = ratios[kind]
+        list[#list + 1] = ratio
+        all[kind][#all[kind] + 1] = ratio
       end
     end
-    local m = median(ratios)
-    fixtureMedians[#fixtureMedians + 1] = m
-    print(string.format("  median over %d simulated stats %.3f", #ratios, m))
+    for _, kind in ipairs(KINDS) do
+      local m = median(ratios[kind])
+      fixtureMedians[kind][#fixtureMedians[kind] + 1] = m
+      print(string.format("  median over %d %s stats %.3f", #ratios[kind], kind, m))
+    end
     print("")
   end
 end
 
-local largest = math.max(unpack(fixtureMedians))
-print(string.format("fixture medians: %s", (function()
+for _, kind in ipairs(KINDS) do
+  local meds = fixtureMedians[kind]
+  local largest = math.max(unpack(meds))
   local parts = {}
-  for k, m in ipairs(fixtureMedians) do parts[k] = string.format("%.3f", m) end
-  return table.concat(parts, ", ")
-end)()))
-print(string.format("median over %d simulated (fixture, stat) pairs %.3f; largest fixture median %.3f; that"
-  .. " rounded up to 2 places %.2f", #all, median(all), largest, math.ceil(largest * 100) / 100))
-print(string.format("Core/Defaults stageStratificationGain %s", tostring(Defaults.stageStratificationGain)))
+  for k, m in ipairs(meds) do parts[k] = string.format("%.3f", m) end
+  print(string.format("%s fixture medians: %s", kind, table.concat(parts, ", ")))
+  print(string.format("%s: median over %d (fixture, stat) pairs %.3f; largest fixture median %.3f; that rounded up"
+    .. " to 2 places %.2f", kind, #all[kind], median(all[kind]), largest, math.ceil(largest * 100) / 100))
+  print(string.format("Core/Defaults %s %s", GAIN_FIELDS[kind], tostring(Defaults[GAIN_FIELDS[kind]])))
+end
 print(string.format("%.0f s", os.clock() - t0))

@@ -295,6 +295,7 @@ function Weights.stepper(plan, stats, steps, scenario)
     plan = plan, stats = stats, steps = steps, seed = scenario.seed,
     firstFights = scenario.stageFirstFights, batchSize = scenario.stageBatchSize,
     minBatches = scenario.stageMinBatches, gain = scenario.stageStratificationGain,
+    pathwiseGain = scenario.stagePathwiseGain,
     quantile = scenario.stageQuantile, stake = scenario.stageStake,
     points = scenario.stakePoints, relative = scenario.stageRelative, maxFights = scenario.stageMaxFights,
     stage = 0, done = false, fightsTotal = 0, unit = nil,
@@ -325,9 +326,10 @@ end
 
 -- Weight, variance of the weight, fights behind it, batches in it and degrees of freedom.
 --
--- The stop test (gap, below) reads this variance. A simulated stat's batch-mean variance never
--- falls below its stage 1 per-fight variance x stageStratificationGain / its batch fights,
--- and keeps batches - 1 degrees of freedom. A few batches can agree by luck, and the stepper
+-- The stop test (gap, below) reads this variance. A stat's batch-mean variance never falls
+-- below its stage 1 per-fight variance x its kind's gain / its batch fights, and keeps
+-- batches - 1 degrees of freedom. The gain is stageStratificationGain for a simulated stat and
+-- stagePathwiseGain for a pathwise slope. A few batches can agree by luck, and the stepper
 -- stops giving batches to a stat whose spread looks small, so without this floor that stat
 -- stops on a too-narrow interval.
 function Stepper:estimate(stat)
@@ -341,8 +343,9 @@ function Stepper:estimate(stat)
   local nb = #means
   if nb >= self.minBatches then
     local m2, v2 = meanVar(means)
-    if kind == "simulated" and v ~= huge then
-      local floor = v * n1 * self.gain / (nb * self.batchSize)
+    if v ~= huge then
+      local gain = kind == "pathwise" and self.pathwiseGain or self.gain
+      local floor = v * n1 * gain / (nb * self.batchSize)
       if v2 < floor then v2 = floor end
     end
     m, v, df = combine(m, v, m2, v2, df, nb - 1)

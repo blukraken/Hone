@@ -306,33 +306,39 @@ check("begin refuses a model without fightPlan",
   raises(function() Contract.begin({ class = "TESTCLASS", spec = "LINEAR", stats = {} }, {}) end, "fightPlan"))
 
 -- The variance floor. Stratified batches of this plan agree exactly, so their spread is 0, while
--- stage 1's unstratified fights carry noise. The batch variance must rise to stage 1's per-fight
--- variance x stageStratificationGain / batch fights, keeping batches - 1 degrees of freedom.
+-- stage 1's unstratified fights carry noise. Each stat's batch variance must rise to stage 1's
+-- per-fight variance x its kind's gain / batch fights, keeping batches - 1 degrees of freedom.
 local floorPlan = {
-  kinds = { power = "simulated" },
+  kinds = { power = "simulated", edge = "pathwise" },
   run = function(stat, seed, strata, first, count)
-    local values = {}
+    local values, pw = {}, { edge = {} }
     for i = 1, count do
+      local f = first + i - 1
       local v = 100
-      if stat then v = v + 20 + (strata and 0 or 50 * noise(seed, first + i - 1, 3)) end
+      if stat then v = v + 20 + (strata and 0 or 50 * noise(seed, f, 3)) end
       values[i] = v
+      pw.edge[i] = 0.1 + (strata and 0 or 0.05 * noise(seed, f, 99))
     end
-    return values
+    return values, not stat and pw or nil
   end,
 }
 local floorScenario = {}
 for k, v in pairs(Defaults) do floorScenario[k] = v end
 floorScenario.seed = 5
-local fst = Weights.stepper(floorPlan, { "power" }, { power = 100 }, floorScenario):run(2)
-local fm, fv, _, fnb, fdf = fst:estimate("power")
-local fsamples = fst:firstSamples("power")
-local m1, v1 = Weights.meanVar(fsamples)
-local lowest = v1 * #fsamples * Defaults.stageStratificationGain / (fnb * Defaults.stageBatchSize)
-local _, wantV, wantDf = Weights.combine(m1, v1, 0.2, lowest, #fsamples - 1, fnb - 1)
-check("a simulated stat's batch variance never falls below the stage 1 floor",
-  fnb >= Defaults.stageMinBatches and fv > 0 and near(fv, wantV) and near(fdf, wantDf)
-    and fst:result().halfWidths.power > 0,
-  string.format("batches %d variance %.3g want %.3g df %.3g want %.3g", fnb, fv, wantV, fdf, wantDf))
+local fst = Weights.stepper(floorPlan, { "power", "edge" }, { power = 100, edge = 100 }, floorScenario):run(2)
+local floorGains = { power = Defaults.stageStratificationGain, edge = Defaults.stagePathwiseGain }
+local floorWant = { power = 0.2, edge = 0.1 }
+for _, stat in ipairs({ "power", "edge" }) do
+  local _, fv, _, fnb, fdf = fst:estimate(stat)
+  local fsamples = fst:firstSamples(stat)
+  local m1, v1 = Weights.meanVar(fsamples)
+  local lowest = v1 * #fsamples * floorGains[stat] / (fnb * Defaults.stageBatchSize)
+  local _, wantV, wantDf = Weights.combine(m1, v1, floorWant[stat], lowest, #fsamples - 1, fnb - 1)
+  check(string.format("a %s stat's batch variance never falls below the stage 1 floor", floorPlan.kinds[stat]),
+    fnb >= Defaults.stageMinBatches and fv > 0 and near(fv, wantV) and near(fdf, wantDf)
+      and fst:result().halfWidths[stat] > 0,
+    string.format("batches %d variance %.3g want %.3g df %.3g want %.3g", fnb, fv, wantV, fdf, wantDf))
+end
 
 ------------------------------------------------------------------------------
 -- Enhancement weights: kinds and pathwise slopes
