@@ -209,6 +209,143 @@ end
 check("an unmodeled imbue appears in coverage", named)
 
 ------------------------------------------------------------------------------
+-- The weigh hook
+------------------------------------------------------------------------------
+
+local weighCalls = 0
+Contract.register("TESTCLASS", "BATCHED", {
+  weightStats = { "power" },
+  simulate = function(s) return { dps = 100 + 2 * s.stats.power } end,
+  weigh = function(s, _, stats, steps)
+    weighCalls = weighCalls + 1
+    return { dps = 100 + 2 * s.stats.power, weights = { power = 2 }, fights = { power = 7 }, batches = 3,
+             stepSeen = steps[stats[1]] }
+  end,
+})
+local batched = Contract.evaluate({ class = "TESTCLASS", spec = "BATCHED", stats = { power = 5 } }, { weightDelta = 4 })
+check("a model's weigh replaces simulate for the base and the weights",
+  weighCalls == 1 and near(batched.dps, 110) and near(batched.weights.power, 2) and batched.run.stepSeen == 4)
+check("evaluate passes on the fights and batches weigh reports", batched.fights.power == 7 and batched.batches == 3)
+
+------------------------------------------------------------------------------
+-- Enhancement weights: pathwise, derived and the stop rule
+------------------------------------------------------------------------------
+
+local Enh = Contract.lookup("SHAMAN", "ENHANCEMENT")
+local EventSim = ns.Engine.Classes.Shaman.EventSim
+local hitcapSnap = snapshots["enh60-rockbiter-2h38-hitcap"]
+local perPoint = hitcapSnap.model.perPoint
+local batch = { iterations = 199, seed = 7, duration = 120, durationVariation = 15, capWindow = -1 }
+local one = Contract.evaluate(hitcapSnap, batch)
+check("strength and attack power come from the pathwise slopes",
+  one.run.plan.strength.kind == "pathwise" and one.run.plan.attack_power.kind == "pathwise"
+    and near(one.weights.strength, perPoint.strength.attackPower * one.weights.attack_power, 1e-12))
+check("agility is the crit weight times the perPoint ratio", one.run.plan.agility.kind == "derived"
+  and near(one.weights.agility, one.weights.crit_rating * perPoint.agility.meleeCritPercent
+    / perPoint.crit_rating.meleeCritPercent, 1e-12))
+
+local byDifference = {}
+for k, v in pairs(batch) do byDifference[k] = v end
+byDifference.event = { pathwise = false }
+byDifference.stats = { "strength", "attack_power" }
+local fd = Contract.evaluate(hitcapSnap, byDifference)
+check("the pathwise strength slope equals the +100 forward difference on the same draws",
+  fd.run.plan.strength.kind == "simulated" and math.abs(fd.weights.strength / one.weights.strength - 1) < 1e-6
+    and math.abs(fd.weights.attack_power / one.weights.attack_power - 1) < 1e-6,
+  string.format("fd %.8f pathwise %.8f", fd.weights.strength, one.weights.strength))
+
+local agileAp = {}
+for k, v in pairs(hitcapSnap) do agileAp[k] = v end
+agileAp.model = {}
+for k, v in pairs(hitcapSnap.model) do agileAp.model[k] = v end
+agileAp.model.perPoint = {}
+for k, v in pairs(perPoint) do agileAp.model.perPoint[k] = v end
+agileAp.model.perPoint.agility = { meleeCritPercent = perPoint.agility.meleeCritPercent, attackPower = 1 }
+check("agility from crit refuses a perPoint.agility with an attack power term",
+  raises(function() Contract.evaluate(agileAp, batch) end, "agility from crit"))
+
+local staked = {}
+for k, v in pairs(batch) do staked[k] = v end
+staked.stopRule = "dps"
+local rule = ns.Engine.Core.Defaults.stopRules.dps
+local stop = Contract.evaluate(hitcapSnap, staked)
+local stakeOk, detail = stop.batches >= ns.Engine.Core.Defaults.stopMinBatches, ""
+for stat, w in pairs(stop.weights) do
+  local se = stop.run.se[stat]
+  if stop.run.settled[stat] and not (rule.z * se * rule.points < rule.stake) then
+    stakeOk, detail = false, stat
+  end
+  if stop.fights[stat] % ns.Engine.Core.Defaults.stopBatchSize ~= 0 or stop.fights[stat] > stop.iterations then
+    stakeOk, detail = false, stat .. " fights " .. tostring(stop.fights[stat])
+  end
+end
+check("the dps stop rule stops every weight under the stake, in whole batches", stakeOk
+  and next(stop.run.settled) ~= nil, detail)
+
+------------------------------------------------------------------------------
+-- Draw discipline (EventSim.lua header)
+------------------------------------------------------------------------------
+
+local fh = assert(io.open(root .. "/Hone/Engine/Classes/Shaman/EventSim.lua", "rb"))
+local source = fh:read("*a")
+fh:close()
+local draws, named = 0, 0
+for args in source:gmatch("[^%w_]U%(([^%)]*)%)") do
+  draws = draws + 1
+  if args:match("^S_[%u_]+$") or args == "site" then named = named + 1 end
+end
+check("every random draw in EventSim names its site", draws > 0 and draws == named,
+  string.format("%d of %d draws name a site", named, draws))
+local enters, rooted = 0, 0
+for args in source:gmatch("[^%w_]enter%(([^,%)]*)") do
+  enters = enters + 1
+  if args:match("^R%.[%u_]+$") or args == "root" then rooted = rooted + 1 end
+end
+check("every root event enters through a named root", enters > 0 and enters == rooted,
+  string.format("%d of %d enter calls name a root", rooted, enters))
+
+local siteSeen, sitesOk = {}, true
+for _, v in pairs(EventSim.SITES) do
+  if siteSeen[v] or v < 0 or v >= 32 then sitesOk = false end
+  siteSeen[v] = true
+end
+local rootsOk = true
+for _, v in pairs(EventSim.ROOTS) do if v < 16 or v >= 64 then rootsOk = false end end
+for _, v in pairs(EventSim.NESTED) do if v < 0 or v > 3 then rootsOk = false end end
+check("site numbers are distinct and fit the key's 32 sites", sitesOk)
+check("roots sit in [16, 64) above every nested kind, so a nested context never equals a root", rootsOk)
+
+local unique, duplicate = true, ""
+for _, id in ipairs({ "enh60-rockbiter-2h38-hitcap", "enh60-windfury-dw26-29" }) do
+  local snap = snapshots[id]
+  local o = Enh.eventOptions({}, 199)
+  o.audit = {}
+  EventSim.run(EventSim.character(snap), { duration = 120, durationVariation = 15 }, 11, 6, o)
+  local seen = {}
+  for _, a in ipairs(o.audit) do
+    local k = a.fight .. ":" .. a.key .. ":" .. a.slot
+    if seen[k] then unique, duplicate = false, id .. " " .. k end
+    seen[k] = true
+  end
+end
+check("no (fight, key, slot) is drawn twice in a fight", unique, duplicate)
+
+local strata = {}
+local lhsOpts = Enh.eventOptions({}, 199)
+lhsOpts.audit = {}
+EventSim.run(EventSim.character(hitcapSnap), { duration = 120, durationVariation = 15 }, 11, 199, lhsOpts)
+local fightEndKey = EventSim.ROOTS.FIGHT * 32 + EventSim.SITES.FIGHT_END
+local hits = 0
+for _, a in ipairs(lhsOpts.audit) do
+  if a.key == fightEndKey then
+    local s = math.floor(a.u * 199)
+    if not strata[s] then hits = hits + 1 end
+    strata[s] = true
+  end
+end
+check("a stratified batch puts one fight in each of its 199 strata", hits == 199, tostring(hits))
+
+------------------------------------------------------------------------------
 -- Engine hygiene
 ------------------------------------------------------------------------------
 

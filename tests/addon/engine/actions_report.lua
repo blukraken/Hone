@@ -52,7 +52,13 @@ for _, id in ipairs(opts.ids) do
   local snap = assert(snapshots[id], "no snapshot " .. id)
   local impl = Contract.lookup(snap.class, snap.spec)
   local t0 = os.clock()
+  -- Real outcomes on sampled fight ends, so per-fight counts and crit shares compare with
+  -- MythicSim's; the Flurry listener order stays as production runs it.
+  local event = {}
+  for k, v in pairs(impl.SEQUENTIAL or {}) do event[k] = v end
+  event.flurryFirst = true
   local run = impl.simulate(snap, { path = opts.path, seed = opts.seed, iterations = opts.iterations,
+    event = event, tally = true,
     duration = 120, durationVariation = 15 })
   local cpu = os.clock() - t0
   local ref = snap.reference.mythicsim

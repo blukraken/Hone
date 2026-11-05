@@ -49,8 +49,14 @@ end
 -- One-sided weights at every cap within `window` steps of a stat's value. `caps` maps a stat
 -- to a list of the stat values where its caps are. Both slopes are taken at the cap itself, so
 -- `below` is the loss per point under it and `above` the gain per point past it. Each stat's
--- entries are sorted by cap.
+-- entries are sorted by cap. `base` is the dps at the snapshot, or a function that gives it,
+-- called only when a stat sits exactly at a cap.
 function Weights.caps(dpsOf, snapshot, base, caps, steps, fallback, window)
+  local baseValue = type(base) == "number" and base or nil
+  local function baseOf()
+    if not baseValue then baseValue = base() end
+    return baseValue
+  end
   local out = {}
   for _, stat in ipairs(Table.sortedKeys(caps)) do
     local step = (steps and steps[stat]) or fallback
@@ -62,7 +68,7 @@ function Weights.caps(dpsOf, snapshot, base, caps, steps, fallback, window)
     for _, cap in ipairs(list) do
       if math.abs(value - cap) <= window * step then
         local toCap = cap - value
-        local atCap = toCap == 0 and base or dpsOf(Weights.shift(snapshot, stat, toCap))
+        local atCap = toCap == 0 and baseOf() or dpsOf(Weights.shift(snapshot, stat, toCap))
         local below = (atCap - dpsOf(Weights.shift(snapshot, stat, toCap - step))) / step
         local above = (dpsOf(Weights.shift(snapshot, stat, toCap + step)) - atCap) / step
         entries[#entries + 1] = { below = below, above = above, cap = cap, value = value }

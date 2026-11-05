@@ -75,7 +75,7 @@ local function honeRuns(snapshot)
   local runs, totals = {}, {}
   for k = 1, batches do
     local rng = Rng.new(SEED_BASE + k)
-    local _, rule, tally = EventSim.run(char, scenario, rng, iterations)
+    local _, rule, tally = EventSim.run(char, scenario, rng, iterations, { tally = true })
     runs[k] = { procs = rule.procs, eligible = rule.eligible, rolls = rule.rolls, iterations = iterations }
     for name, row in pairs(tally) do totals[name] = (totals[name] or 0) + row.casts end
   end

@@ -8,6 +8,12 @@
 --   simulate(snapshot, scenario)     -> { dps = n, dpsStdev = n?, iterations = n? }
 --   caps(snapshot, scenario)?        -> { [stat] = { stat value of each cap, ... } }
 --   coverage(snapshot, scenario)?    -> list of unmodeled mechanic names
+--   weigh(snapshot, scenario, stats, steps)?
+--                                    -> { dps = n, weights = { [stat] = n }, dpsStdev = n?,
+--                                         iterations = n?, fights = { [stat] = n }?, batches = n? }
+--                                    the base dps and forward weights in one call, for a model
+--                                    that runs its own batches or stop rule; without it evaluate
+--                                    calls simulate once per stat
 --
 -- A snapshot is plain data: { class = token, spec = token, stats = { [stat] = n }, ... }.
 -- A model may read any other snapshot field it documents.
@@ -23,6 +29,7 @@
 -- leaves out. A scenario that sets weightDelta alone steps every stat by it. A step stops at a
 -- cap rather than cross it.
 --   coverage                         { complete = bool, unmodeled = { name, ... } }
+--   fights, batches                  what weigh reports, when the model has it
 
 local _, ns = ...
 ns.Engine = ns.Engine or {}
@@ -78,9 +85,7 @@ function Contract.evaluate(snapshot, scenario)
     return run.dps, run
   end
 
-  local dps, run = dpsOf(snapshot)
   local stats = scenario.stats or impl.weightStats
-
   local unmodeled = impl.coverage and impl.coverage(snapshot, scenario) or {}
   local caps = impl.caps and impl.caps(snapshot, scenario) or {}
   for stat, list in pairs(caps) do
@@ -88,14 +93,30 @@ function Contract.evaluate(snapshot, scenario)
   end
   local steps = Weights.steps(snapshot, stats, scenario.weightSteps, scenario.weightDelta, caps)
 
+  local dps, run, weights, capBase
+  if impl.weigh then
+    run = impl.weigh(snapshot, scenario, stats, steps)
+    assert(type(run) == "table" and type(run.dps) == "number" and type(run.weights) == "table",
+      "weigh must return { dps = n, weights = { ... } }")
+    dps, weights = run.dps, run.weights
+    -- Cap weights pair with one simulate run of their own, so their base is that run.
+    capBase = function() return (dpsOf(snapshot)) end
+  else
+    dps, run = dpsOf(snapshot)
+    weights = Weights.forward(dpsOf, snapshot, dps, stats, steps)
+    capBase = dps
+  end
+
   return {
     dps = dps,
     dpsStdev = run.dpsStdev,
     iterations = run.iterations,
     run = run,
-    weights = Weights.forward(dpsOf, snapshot, dps, stats, steps),
+    weights = weights,
     steps = steps,
-    capWeights = Weights.caps(dpsOf, snapshot, dps, caps, scenario.weightSteps, scenario.weightDelta,
+    fights = run.fights,
+    batches = run.batches,
+    capWeights = Weights.caps(dpsOf, snapshot, capBase, caps, scenario.weightSteps, scenario.weightDelta,
       scenario.capWindow),
     coverage = { complete = #unmodeled == 0, unmodeled = unmodeled },
   }
