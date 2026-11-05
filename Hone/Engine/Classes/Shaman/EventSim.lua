@@ -10,6 +10,7 @@
 --   The rotation runs at the end of each GCD, after each main hand swing, and one reaction time
 --   after every swing. When nothing is castable it waits for the later of one reaction time
 --   and the GCD. A spell ready within 400 ms is queued for the moment it is ready.
+--   A pass that provably cannot act is skipped (see rotate), which changes no fight.
 --   Flurry, Maelstrom Weapon, Elemental Devastation, Crusader, Judgement of Wisdom and
 --   Dragonbreath Chili act one spell batch window (10 ms) after the hit that triggers them.
 --
@@ -49,6 +50,8 @@
 --                function of (seed, lhs, f) alone, so fights first..first + n - 1 in one run
 --                equal the same fights split across several runs.
 --   audit        a list that receives the key, slot and value of every indexed draw (tests only).
+--   everyPass    runs every rotation pass, the poll skip off (tests only).
+--   passes       a table whose run and skipped fields count rotation passes (tests only).
 
 local _, ns = ...
 local Engine = ns.Engine
@@ -398,6 +401,9 @@ function EventSim.run(char, scenario, source, iterations, opts)
   local manaNow, manaMax
   local gcdReady, rotationAt, rotationGen, queuedGen
   local rotT, rotSeq
+  -- Bumped by every change to rotation state other than time passing and mana rising.
+  local rotState = 0
+  local everyPass, passes = opts.everyPass, opts.passes
   local cooldownReady
   local bfUntil, rotfUntil, hsUntilMh, hsUntilOh, edUntil, ccUntil
   local flurryCharges, flurryIcd, flurryGen
@@ -533,6 +539,7 @@ function EventSim.run(char, scenario, source, iterations, opts)
   end
 
   local function gainMana(amount)
+    if amount < 0 then rotState = rotState + 1 end
     manaNow = manaNow + amount
     if manaNow > manaMax then manaNow = manaMax end
   end
@@ -946,6 +953,7 @@ function EventSim.run(char, scenario, source, iterations, opts)
 
   local function doCast(name)
     local sp = spells[name]
+    rotState = rotState + 1
     manaNow = manaNow - costOf(name, sp)
     startCooldown(sp)
     if sp.gcd and sp.gcd > 0 then gcdReady = now + sp.gcd end
@@ -1042,21 +1050,46 @@ function EventSim.run(char, scenario, source, iterations, opts)
     end
     local mswMax = maelstrom and maelstrom.maxStacks
 
+    -- Poll skip. A pass that ends with no cast, autocast or queued spell is quiet. While its
+    -- state is unchanged a later pass can act only once a test that blocked a step passes:
+    -- the GCD or a cooldown runs out, a queue window opens, Searing Totem or Flame Shock
+    -- ends, or mana reaches a cost. A passing test that starts to fail cannot make a step act.
+    -- The quiet pass records the first such time (quietUntil) and mana (quietMana). Mana
+    -- falls only through a cast, and every cast and every full Maelstrom bar bumps rotState.
+    -- So a pass with the same rotState, before quietUntil and under quietMana, would do
+    -- nothing, and it is skipped. It still schedules the next poll, as the full pass would.
+    local quietState, quietUntil, quietMana = -1, -huge, -huge
+
+    -- A queue window opens at `at` - queueWindow. The quiet time stops this far short of it,
+    -- so rounding cannot open it early.
+    local EDGE = 1e-6
+
     -- One rotation pass at `now`. A step is ready when its spell can be cast now or queued; a
     -- spell queued in this pass blocks further queueing, and a lower step cast now replaces it.
     rotate = function()
       local t = now
       if rotationAt > t then return end
-      local queuedNow = false
+      if rotState == quietState and t < quietUntil and manaNow < quietMana then
+        if passes then passes.skipped = passes.skipped + 1 end
+        local nextAt = t + reaction
+        if gcdReady > nextAt then nextAt = gcdReady end
+        setRotation(nextAt)
+        return
+      end
+      if passes then passes.run = passes.run + 1 end
+      local queuedNow, acted, gcdOk = false, false, false
+      local u, mh
       for _ = 1, 16 do
-        local acted = false
+        acted = false
         -- State a pass reads. Only a cast or a successful autocast changes it, and both end
         -- the pass. Codes: 1 cooldowns, 2 always, 3 Fire Nova on Clearcasting, 4 Lightning Bolt
-        -- on full Maelstrom, 5 Searing Totem, 6 Flame Shock, 7 Fire Nova on mana.
+        -- on full Maelstrom, 5 Searing Totem, 6 Flame Shock, 7 Fire Nova on mana. u and mh
+        -- collect the time and mana at which a blocking test would pass.
         local ccActive = focus ~= nil and ccUntil > t
         local mswFull = maelstrom ~= nil and mswUntil > t and msw >= mswMax
         local gcd, mana = gcdReady, manaNow
-        local gcdOk = gcd <= t
+        gcdOk = gcd <= t
+        u, mh = gcdOk and huge or gcd, huge
         for i = 1, nCompiled do
           local code = stepCode[i]
           local ok
@@ -1066,9 +1099,21 @@ function EventSim.run(char, scenario, source, iterations, opts)
             ok = false
           elseif code == 3 then ok = ccActive
           elseif code == 4 then ok = mswFull
-          elseif code == 5 then ok = totemUntil <= t and fightEnd - t >= searingMin
-          elseif code == 6 then ok = fsUntil <= t
-          else ok = mana >= fnManaPercent * manaMax end
+          elseif code == 5 then
+            if totemUntil <= t then
+              ok = fightEnd - t >= searingMin
+            else
+              ok = false
+              if totemUntil < u then u = totemUntil end
+            end
+          elseif code == 6 then
+            ok = fsUntil <= t
+            if not ok and fsUntil < u then u = fsUntil end
+          else
+            local need = fnManaPercent * manaMax
+            ok = mana >= need
+            if not ok and need < mh then mh = need end
+          end
           if ok then
             local cost
             if ccActive and stepCC[i] then cost = 0
@@ -1083,6 +1128,7 @@ function EventSim.run(char, scenario, source, iterations, opts)
                 acted = true
                 break
               end
+              if cdAt > t and cdAt < u then u = cdAt end
               if not queuedNow then
                 local at = cdAt > gcd and cdAt or gcd
                 if at - t <= queueWindow then
@@ -1090,12 +1136,31 @@ function EventSim.run(char, scenario, source, iterations, opts)
                   queuedGen = queuedGen + 1
                   local name = stepName[i]
                   push(at + 1e-9, EV_QUEUED, queuedGen, name)
+                else
+                  local open = at - queueWindow - EDGE
+                  if open < u then u = open end
                 end
               end
+            elseif cost < mh then
+              mh = cost
             end
           end
         end
         if not acted then break end
+      end
+      if acted or queuedNow or everyPass then
+        quietState = -1
+      else
+        -- Autocasts run only off the GCD; on it, u is already at most the GCD's end.
+        if gcdOk then
+          local x = cooldownReady.bloodFury
+          if bloodFury and x and x > t and x < u then u = x end
+          x = cooldownReady.farseer
+          if farseer and x and x > t and x < u then u = x end
+          if potionReady > t and potionReady < u then u = potionReady end
+          if runeReady > t and runeReady < u then u = runeReady end
+        end
+        quietState, quietUntil, quietMana = rotState, u, mh
       end
       if rotationAt <= t then
         local nextAt = t + reaction
@@ -1213,6 +1278,8 @@ function EventSim.run(char, scenario, source, iterations, opts)
         if mswUntil <= now then msw = 0 end
         if msw < maelstrom.maxStacks then msw = msw + 1 end
         mswUntil = now + maelstrom.duration
+        -- Only a full bar can unblock a rotation step.
+        if msw >= maelstrom.maxStacks then rotState = rotState + 1 end
       elseif kind == EV_SEARING then
         if ev[4] ~= searingGen then return end
         enter(R.SEARING_ATTACK, ev[4] * 64 + (ST.ticks - ev[5] + 1))
@@ -1307,6 +1374,7 @@ function EventSim.run(char, scenario, source, iterations, opts)
     mhNext = delay
     ohNext = dualWield and (oh.speed / 2 + delay) or huge
     gcdReady = 0
+    rotState = rotState + 1
     setRotation(0)
 
     while true do

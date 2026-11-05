@@ -37,8 +37,9 @@ ns.Engine.Core.Defaults = {
   stageBatchSize = 29,
   stageMinBatches = 4,
 
-  -- 95% half-width is stageZ x se.
-  stageZ = 1.96,
+  -- Every half-width is t(stageQuantile, df) x se, a two-sided 95% interval at the estimate's
+  -- own degrees of freedom.
+  stageQuantile = 0.975,
 
   -- Stage 2, verdicts: every half-width times stakePoints under stageStake DPS.
   stageStake = 1.0,

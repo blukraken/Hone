@@ -10,7 +10,12 @@
 -- replayed SCREEN_REPEATS times, the SLOW_CANDIDATES slowest are replayed SLOW_REPEATS
 -- times, and the slowest mean is the fight's cost. The step-1 drive's own wall time over its
 -- fights, less the one-call drive's, is the stepper's cost per step. Their sum must stay under
--- STEP_LIMIT_MS (SP-32's callback limit). Run it alone and pinned (tests/addon/engine/pinned.sh).
+-- STEP_LIMIT_MS (SP-32's callback limit). The slowest fight is re-timed with the collector
+-- stopped, to show how much of it is collector work. Run it alone and pinned
+-- (tests/addon/engine/pinned.sh).
+--
+-- It first checks Core's t quantile against the Student t table at 0.975 and 0.995, and the
+-- Welch-Satterthwaite df of an inverse-variance combination.
 --
 -- Usage: lua tests/addon/engine/stepper_spec.lua [--only ID]
 -- Exit: 0 every check passes, 1 any check fails.
@@ -43,6 +48,29 @@ local function check(name, ok, detail)
     print("FAIL " .. name .. (detail and (": " .. detail) or ""))
   end
 end
+
+-- Student t table values (four decimals) at p = 0.975 and 0.995.
+local T_TABLE = {
+  { 0.975, 1, 12.7062 }, { 0.975, 2, 4.3027 }, { 0.975, 3, 3.1824 }, { 0.975, 4, 2.7764 },
+  { 0.975, 5, 2.5706 }, { 0.975, 10, 2.2281 }, { 0.975, 30, 2.0423 }, { 0.975, huge, 1.9600 },
+  { 0.995, 2, 9.9248 }, { 0.995, 3, 5.8409 }, { 0.995, 10, 3.1693 },
+}
+local Weights = ns.Engine.Core.Weights
+for _, row in ipairs(T_TABLE) do
+  local got = Weights.tQuantile(row[1], row[2])
+  check(string.format("tQuantile(%.3f, %s) = %.4f, table %.4f", row[1], tostring(row[2]), got, row[3]),
+    math.abs(got - row[3]) <= 1e-3)
+end
+check("tQuantile is odd: tQuantile(0.025, 3) = -tQuantile(0.975, 3)",
+  math.abs(Weights.tQuantile(0.025, 3) + Weights.tQuantile(0.975, 3)) < 1e-9)
+do
+  -- Two equal variances at df 3 and 19: W = 2 / v, df = W^2 / (1 / (v^2 3) + 1 / (v^2 19)).
+  local _, v, df = Weights.combine(1, 0.5, 2, 0.5, 3, 19)
+  local want = 4 / (1 / 3 + 1 / 19)
+  check(string.format("combine gives variance 0.25 and Welch-Satterthwaite df %.4f", want),
+    math.abs(v - 0.25) < 1e-12 and math.abs(df - want) < 1e-9, string.format("v %.6f df %.6f", v, df))
+end
+print("")
 
 local function scenarioOf(id)
   local sc = Harness.scenario(id)
@@ -154,6 +182,10 @@ for _, id in ipairs(Harness.FIXTURES) do
       local ms = fightMs(plan, screened[i].call, SLOW_REPEATS)
       if ms > worst then worst, worstCall = ms, screened[i].call end
     end
+    collectgarbage("collect")
+    collectgarbage("stop")
+    local stopped = fightMs(plan, worstCall, SLOW_REPEATS)
+    collectgarbage("restart")
     local overhead = (stepOne.ms - whole.ms) / #stepOne.calls
     if overhead < 0 then overhead = 0 end
     local histogram = {}
@@ -165,10 +197,12 @@ for _, id in ipairs(Harness.FIXTURES) do
     local mean = whole.ms / r.fightsTotal
     print(string.format("  fights %d  mean %.3f ms per fight  slowest fight %.3f ms (%s, seed %d, strata %s, fight %d)",
       #stepOne.calls, mean, worst, worstCall.stat or "base", worstCall.seed, tostring(worstCall.strata), worstCall.first))
+    print(string.format("  slowest fight with the collector running %.3f ms, stopped %.3f ms", worst, stopped))
     print(string.format("  step-1 drive %.0f ms vs one call %.0f ms: %.3f ms stepper cost per step", stepOne.ms,
       whole.ms, overhead))
     print("  step-1 readings at 1 ms resolution: " .. table.concat(bins, ", "))
-    slowest[#slowest + 1] = string.format("%s %.3f ms", id, worst + overhead)
+    slowest[#slowest + 1] = string.format("%s %.3f ms (collector stopped %.3f)", id, worst + overhead,
+      stopped + overhead)
     check(string.format("%s slowest one-fight step %.3f ms (fight %.3f + stepper %.3f) is under %.1f ms", id,
       worst + overhead, worst, overhead, STEP_LIMIT_MS), worst + overhead < STEP_LIMIT_MS)
     print("")

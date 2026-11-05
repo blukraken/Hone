@@ -5,6 +5,11 @@
 -- and the run must match per-fight dps, the final Rng state, the Windfury counters and every
 -- tally cell. The optimised configuration (tally off) must match per-fight dps and Rng state.
 --
+-- The rotation poll skip is checked on the evaluate's own options too: indexed draws with
+-- every estimator option, stratified over a 29-fight batch and unstratified, run with the
+-- skip on and with every pass run (opts.everyPass). Per-fight dps and both pathwise slopes
+-- must match bit for bit. The line also gives the share of passes the skip left out.
+--
 -- Usage: lua tests/addon/engine/faithful.lua [FIGHTS] [SEED]
 -- Exit: 0 every fixture identical, 1 any mismatch.
 
@@ -17,6 +22,20 @@ local OldRng = main.Engine.Core.Rng
 
 local fights = tonumber(arg[1]) or 500
 local seed = tonumber(arg[2]) or 4242
+local Enhancement = ns.Engine.Classes.Shaman.Enhancement
+
+-- Evaluate options, skip on or off, with a pass counter.
+local function evaluateOptions(strata, everyPass)
+  local o = Enhancement.eventOptions({}, strata)
+  o.everyPass, o.passes = everyPass, { run = 0, skipped = 0 }
+  return o
+end
+
+local function sameList(x, y)
+  local bad = (#x == fights and #y == fights) and 0 or 1
+  for i = 1, fights do if x[i] ~= y[i] then bad = bad + 1 end end
+  return bad
+end
 
 local function tallyEqual(x, y)
   for name, row in pairs(x) do
@@ -57,7 +76,21 @@ for _, id in ipairs(Harness.FIXTURES) do
     total = total + bad
     if not ok then allOk = false end
   end
+
+  for _, mode in ipairs({ { "skip lhs29", 29 }, { "skip plain", nil } }) do
+    local char = New.character(snapshot)
+    local on, off = evaluateOptions(mode[2], false), evaluateOptions(mode[2], true)
+    local b, _, _, sb = New.run(char, scenario, seed, fights, on)
+    local c, _, _, sc = New.run(char, scenario, seed, fights, off)
+    local bad = sameList(b, c) + sameList(sb.dAP, sc.dAP) + sameList(sb.dSP, sc.dSP)
+    local passes = on.passes.run + on.passes.skipped
+    local ok = bad == 0 and passes == off.passes.run and off.passes.skipped == 0
+    print(string.format("%-28s %-10s fights %d  mismatches %d  passes %d, skipped %d (%.1f%%)  %s", id, mode[1],
+      fights, bad, passes, on.passes.skipped, on.passes.skipped / passes * 100, ok and "IDENTICAL" or "DIFFERENT"))
+    total = total + bad
+    if not ok then allOk = false end
+  end
 end
-print(string.format("%d fixtures x 2 modes x %d fights: %d mismatches, %s", #Harness.FIXTURES, fights, total,
+print(string.format("%d fixtures x 4 modes x %d fights: %d mismatches, %s", #Harness.FIXTURES, fights, total,
   allOk and "IDENTICAL" or "DIFFERENT"))
 os.exit(allOk and 0 or 1)

@@ -97,12 +97,16 @@ end
 --
 -- Stage 1, first answer. stageFirstFights fights split evenly over the base run and every
 --   simulated stat, on scenario.seed, unstratified. A weight is the mean of its per-fight
---   paired differences and its se their spread over sqrt(n).
+--   paired differences and its se their spread over sqrt(n), with n - 1 degrees of freedom.
 -- Stage 2, verdicts. Batch k of stageBatchSize fights runs on seed + k, stratified. Once a
---   stat has stageMinBatches batches, the spread of its batch means gives a second estimate,
---   combined with stage 1 by inverse variance; until then its weight is stage 1's. The stage
---   holds when every stageZ x se x stakePoints is under stageStake DPS.
--- Stage 3, final. The same batches, until every stageZ x se is under stageRelative x |weight|.
+--   stat has stageMinBatches batches, the spread of its batch means gives a second estimate
+--   with batches - 1 degrees of freedom. It is combined with stage 1 by inverse variance, and
+--   the combination takes the Welch-Satterthwaite degrees of freedom. Until then the weight is
+--   stage 1's. The stage holds when every half-width x stakePoints is under stageStake DPS.
+-- Stage 3, final. The same batches, until every half-width is under stageRelative x |weight|.
+--
+-- Every half-width is t(stageQuantile, df) x se at the estimate's own degrees of freedom, so
+-- an estimate from few batches carries the wider interval its spread has earned.
 --
 -- A unit of work is stage 1's runs, or one batch for one stat. The next unit goes to the stat
 -- whose half-width is furthest over the next stage's target. A stat's batch k pairs with base
@@ -112,9 +116,141 @@ end
 ------------------------------------------------------------------------------
 
 local sqrt, huge, min, abs = math.sqrt, math.huge, math.min, math.abs
+local log, exp = math.log, math.exp
 
 local FINAL_STAGE = 3
 Weights.FINAL_STAGE = FINAL_STAGE
+
+------------------------------------------------------------------------------
+-- Student t quantile
+--
+-- The engine's one t quantile. From df 5 up it is the Cornish-Fisher expansion in 1/df (good
+-- to 1e-3), the same as tests/addon/engine/compare.lua. Below df 5 it inverts the exact t
+-- distribution through the regularized incomplete beta, because a Welch-Satterthwaite df is
+-- not a whole number and the expansion drifts there.
+------------------------------------------------------------------------------
+
+-- Acklam's normal quantile.
+local NA = { -3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+             1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00 }
+local NB = { -5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+             6.680131188771972e+01, -1.328068155288572e+01 }
+local NC = { -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+             -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00 }
+local ND = { 7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+             3.754408661907416e+00 }
+
+local function normalQuantile(p)
+  if p < 0.02425 then
+    local q = sqrt(-2 * log(p))
+    return (((((NC[1] * q + NC[2]) * q + NC[3]) * q + NC[4]) * q + NC[5]) * q + NC[6]) /
+      ((((ND[1] * q + ND[2]) * q + ND[3]) * q + ND[4]) * q + 1)
+  elseif p > 1 - 0.02425 then
+    return -normalQuantile(1 - p)
+  end
+  local q = p - 0.5
+  local r = q * q
+  return (((((NA[1] * r + NA[2]) * r + NA[3]) * r + NA[4]) * r + NA[5]) * r + NA[6]) * q /
+    (((((NB[1] * r + NB[2]) * r + NB[3]) * r + NB[4]) * r + NB[5]) * r + 1)
+end
+Weights.normalQuantile = normalQuantile
+
+-- Lanczos log gamma, for x >= 0.5.
+local LANCZOS = { 0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
+                  -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+                  9.9843695780195716e-6, 1.5056327351493116e-7 }
+
+local function logGamma(x)
+  x = x - 1
+  local a, t = LANCZOS[1], x + 7.5
+  for i = 1, 8 do a = a + LANCZOS[i + 1] / (x + i) end
+  return 0.5 * log(2 * math.pi) + (x + 0.5) * log(t) - t + log(a)
+end
+
+-- Continued fraction of the incomplete beta, by Lentz's method.
+local function betaFraction(a, b, x)
+  local tiny = 1e-300
+  local c, d = 1, 1 - (a + b) * x / (a + 1)
+  if abs(d) < tiny then d = tiny end
+  d = 1 / d
+  local h = d
+  for m = 1, 300 do
+    local m2 = 2 * m
+    local aa = m * (b - m) * x / ((a - 1 + m2) * (a + m2))
+    d = 1 + aa * d
+    if abs(d) < tiny then d = tiny end
+    c = 1 + aa / c
+    if abs(c) < tiny then c = tiny end
+    d = 1 / d
+    h = h * d * c
+    aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + 1 + m2))
+    d = 1 + aa * d
+    if abs(d) < tiny then d = tiny end
+    c = 1 + aa / c
+    if abs(c) < tiny then c = tiny end
+    d = 1 / d
+    local del = d * c
+    h = h * del
+    if abs(del - 1) < 1e-14 then break end
+  end
+  return h
+end
+
+-- Regularized incomplete beta I_x(a, b), given lnBeta = log B(a, b).
+local function incompleteBeta(a, b, x, lnBeta)
+  if x <= 0 then return 0 end
+  if x >= 1 then return 1 end
+  local front = exp(a * log(x) + b * log(1 - x) - lnBeta)
+  if x < (a + 1) / (a + b + 2) then return front * betaFraction(a, b, x) / a end
+  return 1 - front * betaFraction(b, a, 1 - x) / b
+end
+
+-- Cornish-Fisher t quantile, for p > 0.5.
+local function expansionT(p, df)
+  local z = normalQuantile(p)
+  local z2 = z * z
+  local g1 = (z2 + 1) * z / 4
+  local g2 = ((5 * z2 + 16) * z2 + 3) * z / 96
+  local g3 = (((3 * z2 + 19) * z2 + 17) * z2 - 15) * z / 384
+  local g4 = ((((79 * z2 + 776) * z2 + 1482) * z2 - 1920) * z2 - 945) * z / 92160
+  return z + g1 / df + g2 / df ^ 2 + g3 / df ^ 3 + g4 / df ^ 4
+end
+
+-- Exact t quantile for p > 0.5, by Newton's method on the upper tail from the expansion. The
+-- upper tail is I_x(df / 2, 1 / 2) / 2 at x = df / (df + t^2), and its slope is minus the
+-- density.
+local function exactT(p, df)
+  local a = df / 2
+  local lnBeta = logGamma(a) + logGamma(0.5) - logGamma(a + 0.5)
+  local scale = exp(-lnBeta) / sqrt(df)
+  local q, t = 1 - p, expansionT(p, df)
+  for _ = 1, 50 do
+    local t2 = t * t
+    local upper = incompleteBeta(a, 0.5, df / (df + t2), lnBeta) / 2
+    local density = scale * (1 + t2 / df) ^ (-(df + 1) / 2)
+    local nextT = t + (upper - q) / density
+    if nextT <= 0 then nextT = t / 2 end
+    local done = abs(nextT - t) <= 1e-12 * t
+    t = nextT
+    if done then break end
+  end
+  return t
+end
+
+-- Student t quantile at probability p and df degrees of freedom. A df under 1 counts as 1.
+function Weights.tQuantile(p, df)
+  if df == huge then return normalQuantile(p) end
+  if df < 1 then df = 1 end
+  if p == 0.5 then return 0 end
+  local upper = p > 0.5 and p or 1 - p
+  local t = df < 5 and exactT(upper, df) or expansionT(upper, df)
+  return p > 0.5 and t or -t
+end
+local tQuantile = Weights.tQuantile
+
+------------------------------------------------------------------------------
+-- Stepper
+------------------------------------------------------------------------------
 
 -- Mean of values[1..n] and the variance of that mean.
 local function meanVar(values, n)
@@ -133,14 +269,19 @@ local function meanVar(values, n)
 end
 Weights.meanVar = meanVar
 
--- Inverse-variance combination of two estimates. A zero variance wins outright.
-local function combine(m1, v1, m2, v2)
-  if m1 == nil or v1 == huge then return m2, v2 end
-  if v1 == 0 and v2 == 0 then return (m1 + m2) / 2, 0 end
-  if v1 == 0 then return m1, 0 end
-  if v2 == 0 then return m2, 0 end
+-- Inverse-variance combination of two estimates with df1 and df2 degrees of freedom. Returns
+-- the mean, its variance and the Welch-Satterthwaite degrees of freedom. A zero variance wins
+-- outright.
+local function combine(m1, v1, m2, v2, df1, df2)
+  if m1 == nil or v1 == huge then return m2, v2, df2 end
+  if v1 == 0 and v2 == 0 then return (m1 + m2) / 2, 0, huge end
+  if v1 == 0 then return m1, 0, huge end
+  if v2 == 0 then return m2, 0, huge end
   local w1, w2 = 1 / v1, 1 / v2
-  return (m1 * w1 + m2 * w2) / (w1 + w2), 1 / (w1 + w2)
+  local w = w1 + w2
+  local df = huge
+  if df1 and df2 then df = w * w / (w1 * w1 / df1 + w2 * w2 / df2) end
+  return (m1 * w1 + m2 * w2) / w, 1 / w, df
 end
 Weights.combine = combine
 
@@ -153,7 +294,7 @@ function Weights.stepper(plan, stats, steps, scenario)
   local self = setmetatable({
     plan = plan, stats = stats, steps = steps, seed = scenario.seed,
     firstFights = scenario.stageFirstFights, batchSize = scenario.stageBatchSize,
-    minBatches = scenario.stageMinBatches, z = scenario.stageZ, stake = scenario.stageStake,
+    minBatches = scenario.stageMinBatches, quantile = scenario.stageQuantile, stake = scenario.stageStake,
     points = scenario.stakePoints, relative = scenario.stageRelative, maxFights = scenario.stageMaxFights,
     stage = 0, done = false, fightsTotal = 0, unit = nil,
     first = { base = {}, plus = {}, pw = {} },
@@ -181,24 +322,32 @@ function Stepper:firstSamples(stat)
   return out
 end
 
--- Weight, variance of the weight, fights behind it and batches in it.
+-- Weight, variance of the weight, fights behind it, batches in it and degrees of freedom.
 function Stepper:estimate(stat)
-  if self.plan.kinds[stat] == "zero" then return 0, 0, 0, 0 end
+  if self.plan.kinds[stat] == "zero" then return 0, 0, 0, 0, huge end
   local samples = self:firstSamples(stat)
   local m, v = meanVar(samples)
+  local df = #samples - 1
   local means = self.means[stat]
   local nb = #means
   if nb >= self.minBatches then
     local m2, v2 = meanVar(means)
-    m, v = combine(m, v, m2, v2)
+    m, v, df = combine(m, v, m2, v2, df, nb - 1)
   end
-  return m, v, #samples + nb * self.batchSize, nb
+  return m, v, #samples + nb * self.batchSize, nb, df
+end
+
+-- The 95% half-width of an estimate with variance v and df degrees of freedom.
+function Stepper:halfWidth(v, df)
+  if v == 0 then return 0 end
+  if v == huge then return huge end
+  return tQuantile(self.quantile, df) * sqrt(v)
 end
 
 -- Half-width over the target of `stage`. Under 1, or a half-width of 0, meets it.
 function Stepper:gap(stat, stage)
-  local w, v = self:estimate(stat)
-  local hw = self.z * sqrt(v)
+  local w, v, _, _, df = self:estimate(stat)
+  local hw = self:halfWidth(v, df)
   if hw == 0 then return 0 end
   local target = stage == 2 and self.stake / self.points or self.relative * abs(w or 0)
   if target == 0 then return huge end
@@ -328,16 +477,17 @@ function Stepper:run(stage)
   return self
 end
 
--- The current answer: { stage, done, weights, halfWidths, se, fights, batches, fightsTotal,
--- dps, dpsStdev, kinds, steps }. fights[stat] counts the paired fights behind the weight, or
--- the base fights for a pathwise stat.
+-- The current answer: { stage, done, weights, halfWidths, se, df, fights, batches,
+-- fightsTotal, dps, dpsStdev, kinds, steps }. fights[stat] counts the paired fights behind the
+-- weight, or the base fights for a pathwise stat.
 function Stepper:result()
-  local out = { stage = self.stage, done = self.done, weights = {}, halfWidths = {}, se = {}, fights = {},
-                batches = {}, fightsTotal = self.fightsTotal, kinds = self.plan.kinds, steps = self.steps }
+  local out = { stage = self.stage, done = self.done, weights = {}, halfWidths = {}, se = {}, df = {},
+                fights = {}, batches = {}, fightsTotal = self.fightsTotal, kinds = self.plan.kinds,
+                steps = self.steps }
   for _, stat in ipairs(self.stats) do
-    local w, v, fights, nb = self:estimate(stat)
-    out.weights[stat], out.se[stat], out.halfWidths[stat] = w, sqrt(v), self.z * sqrt(v)
-    out.fights[stat], out.batches[stat] = fights, nb
+    local w, v, fights, nb, df = self:estimate(stat)
+    out.weights[stat], out.se[stat], out.halfWidths[stat] = w, sqrt(v), self:halfWidth(v, df)
+    out.df[stat], out.fights[stat], out.batches[stat] = df, fights, nb
   end
   local all = {}
   for i, x in ipairs(self.first.base) do all[i] = x end
