@@ -24,20 +24,31 @@ ns.Engine.Core.Defaults = {
   -- A stat sits at a cap when it is within this many steps of it.
   capWindow = 1,
 
-  -- Stop rules for a model that weighs in batches. A scenario's stopRule names one; without
-  -- it a model runs one batch of `iterations` fights.
-  --   stake     a weight stops when z * se * points < stake, in DPS (decision 0013)
-  --   relative  a weight stops when z * se <= relative * |weight|
-  stopRules = {
-    dps = { z = 1.96, points = 30, stake = 0.3 },
-    rel3 = { z = 1.96, relative = 0.03 },
-  },
+  -- Staged weights (decision 0014; the stepper in Core/Weights.lua describes each stage).
+  -- Contract.evaluate drives the stepper to `stage`.
+  stage = 3,
 
-  -- Batch shape under a stop rule. se comes from batch means, so at least two batches run.
-  -- The batch size is prime so stratified draws can use it as their stratum count.
-  stopBatchSize = 199,
-  stopMinBatches = 2,
-  stopMaxBatches = 100,
+  -- Stage 1, first answer: this many fights in all, split evenly over the base run and every
+  -- simulated stat, unstratified, se from the per-fight spread.
+  stageFirstFights = 100,
+
+  -- Stages 2 and 3: stratified batches of this many fights (prime, so it is the stratum
+  -- count). A stat's batch means give its se once it has stageMinBatches of them.
+  stageBatchSize = 29,
+  stageMinBatches = 4,
+
+  -- 95% half-width is stageZ x se.
+  stageZ = 1.96,
+
+  -- Stage 2, verdicts: every half-width times stakePoints under stageStake DPS.
+  stageStake = 1.0,
+  stakePoints = 30,
+
+  -- Stage 3, final: every half-width under stageRelative of its weight.
+  stageRelative = 0.03,
+
+  -- A stepper stops at this many fights whatever stage it reached.
+  stageMaxFights = 20000,
 }
 
 return ns.Engine.Core.Defaults

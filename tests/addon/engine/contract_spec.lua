@@ -1,7 +1,7 @@
 -- T2: the engine contract (Hone/Engine/Contract.lua).
 --
--- Exercises register, lookup and evaluate with a fake model whose slopes are known, then the
--- Enhancement model on a captured snapshot. The engine loads inside a sandbox that holds only
+-- Exercises register, lookup and evaluate with a fake model whose slopes are known, the staged
+-- stepper with a fake fightPlan model, then the Enhancement model on captured snapshots. The engine loads inside a sandbox that holds only
 -- Lua 5.1's standard library, so any read of a WoW API global fails the run.
 --
 -- Usage: lua tests/addon/engine/contract_spec.lua
@@ -209,78 +209,168 @@ end
 check("an unmodeled imbue appears in coverage", named)
 
 ------------------------------------------------------------------------------
--- The weigh hook
+-- The staged stepper (Core/Weights.lua) through a fake fightPlan model
 ------------------------------------------------------------------------------
 
-local weighCalls = 0
-Contract.register("TESTCLASS", "BATCHED", {
-  weightStats = { "power" },
-  simulate = function(s) return { dps = 100 + 2 * s.stats.power } end,
-  weigh = function(s, _, stats, steps)
-    weighCalls = weighCalls + 1
-    return { dps = 100 + 2 * s.stats.power, weights = { power = 2 }, fights = { power = 7 }, batches = 3,
-             stepSeen = steps[stats[1]] }
+-- Per-fight dps is 100 + 0.2 * power + 0.3 * skill plus noise drawn from (seed, f), and each
+-- plus run adds noise of its own, so a weight's per-fight differences have a spread. edge
+-- is pathwise at 0.1 per point plus noise; flat is zero. Slopes under 1 make 3% the stricter
+-- target, so stage 3 needs more fights than stage 2.
+local Rng = ns.Engine.Core.Rng
+local function noise(seed, f, salt)
+  return Rng.new(seed * 7919 + f * 104729 + salt):next() - 0.5
+end
+local SLOPES = { power = 0.2, skill = 0.3 }
+local planCalls = 0
+local staged = {
+  weightStats = { "power", "skill", "edge", "flat" },
+  simulate = function(s) return { dps = 100 + 0.2 * s.stats.power + 0.3 * s.stats.skill } end,
+  fightPlan = function(snapshot, _, stats, steps)
+    planCalls = planCalls + 1
+    local kinds = { power = "simulated", skill = "simulated", edge = "pathwise", flat = "zero" }
+    local base = 100 + 0.2 * snapshot.stats.power + 0.3 * snapshot.stats.skill
+    local function run(stat, seed, strata, first, count)
+      local values, pw = {}, { edge = {} }
+      for i = 1, count do
+        local f = first + i - 1
+        local v = base + 40 * noise(seed, f, strata or 0)
+        if stat then v = v + SLOPES[stat] * steps[stat] + 50 * noise(seed, f, #stat) end
+        values[i] = v
+        pw.edge[i] = 0.1 + 0.05 * noise(seed, f, 99)
+      end
+      return values, not stat and pw or nil
+    end
+    return { kinds = kinds, run = run }
   end,
-})
-local batched = Contract.evaluate({ class = "TESTCLASS", spec = "BATCHED", stats = { power = 5 } }, { weightDelta = 4 })
-check("a model's weigh replaces simulate for the base and the weights",
-  weighCalls == 1 and near(batched.dps, 110) and near(batched.weights.power, 2) and batched.run.stepSeen == 4)
-check("evaluate passes on the fights and batches weigh reports", batched.fights.power == 7 and batched.batches == 3)
+}
+Contract.register("TESTCLASS", "STAGED", staged)
+local stagedSnap = { class = "TESTCLASS", spec = "STAGED", stats = { power = 5, skill = 9 } }
+local Defaults, Weights = ns.Engine.Core.Defaults, ns.Engine.Core.Weights
+
+local s3 = Contract.evaluate(stagedSnap, { seed = 5, capWindow = -1 })
+local ok3, detail3 = s3.stage == 3, "stage " .. tostring(s3.stage)
+for _, stat in ipairs({ "power", "skill", "edge" }) do
+  local hw = s3.halfWidths[stat]
+  if not (hw < Defaults.stageRelative * math.abs(s3.weights[stat])) then ok3, detail3 = false, stat end
+end
+check("evaluate drives a fightPlan model to stage 3, every half-width under 3% of its weight", ok3, detail3)
+check("stage 3 weights sit near the true slopes",
+  math.abs(s3.weights.power - 0.2) < 0.012 and math.abs(s3.weights.skill - 0.3) < 0.018
+    and math.abs(s3.weights.edge - 0.1) < 0.006,
+  string.format("power %.4f skill %.4f edge %.4f", s3.weights.power, s3.weights.skill, s3.weights.edge))
+check("a zero stat has weight 0, half-width 0 and no fights",
+  s3.weights.flat == 0 and s3.halfWidths.flat == 0 and s3.fights.flat == 0)
+
+local s2 = Contract.evaluate(stagedSnap, { seed = 5, capWindow = -1, stage = 2 })
+local ok2 = s2.stage == 2 and s2.iterations < s3.iterations
+for _, stat in ipairs({ "power", "skill", "edge" }) do
+  if not (s2.halfWidths[stat] * Defaults.stakePoints < Defaults.stageStake) then ok2 = false end
+end
+check("scenario.stage = 2 stops at verdict precision, with fewer fights than stage 3", ok2,
+  string.format("stage %s fights %d vs %d", tostring(s2.stage), s2.iterations, s3.iterations))
+
+local stepper = Contract.begin(stagedSnap, { seed = 5 })
+local per = math.floor(Defaults.stageFirstFights / 3)
+local firstRan = stepper:step(10 ^ 6)
+check("stage 1 splits stageFirstFights evenly over the base run and the simulated stats, and step returns there",
+  firstRan == 3 * per and stepper.stage >= 1 and stepper:result().fights.power == per,
+  string.format("ran %d, stage %d", firstRan, stepper.stage))
+local r1 = stepper:result()
+check("result reports weights, half-widths, stage and fights at every stage",
+  type(r1.weights.power) == "number" and type(r1.halfWidths.skill) == "number" and r1.stage == stepper.stage
+    and r1.fightsTotal == firstRan)
+
+local function drive(size)
+  local st = Contract.begin(stagedSnap, { seed = 5 })
+  while not st.done do st:step(size) end
+  return st:result()
+end
+local whole, sameOk, sameDetail = drive(10 ^ 9), true, ""
+for _, size in ipairs({ 1, 7, 29 }) do
+  local r = drive(size)
+  for _, stat in ipairs(staged.weightStats) do
+    if r.weights[stat] ~= whole.weights[stat] or r.halfWidths[stat] ~= whole.halfWidths[stat]
+        or r.fights[stat] ~= whole.fights[stat] then
+      sameOk, sameDetail = false, size .. " " .. stat
+    end
+  end
+  if r.fightsTotal ~= whole.fightsTotal or r.stage ~= whole.stage then sameOk, sameDetail = false, "size " .. size end
+end
+check("steps of 1, 7 and 29 fights give the result of one call", sameOk, sameDetail)
+
+local cm, cv = Weights.combine(1, 1, 3, 1)
+local zm, zv = Weights.combine(1, 0, 3, 1)
+check("inverse-variance combination weights each estimate by its precision",
+  near(cm, 2) and near(cv, 0.5) and zm == 1 and zv == 0)
+check("begin refuses a model without fightPlan",
+  raises(function() Contract.begin({ class = "TESTCLASS", spec = "LINEAR", stats = {} }, {}) end, "fightPlan"))
 
 ------------------------------------------------------------------------------
--- Enhancement weights: pathwise, derived and the stop rule
+-- Enhancement weights: kinds and pathwise slopes
 ------------------------------------------------------------------------------
 
 local Enh = Contract.lookup("SHAMAN", "ENHANCEMENT")
 local EventSim = ns.Engine.Classes.Shaman.EventSim
 local hitcapSnap = snapshots["enh60-rockbiter-2h38-hitcap"]
-local perPoint = hitcapSnap.model.perPoint
-local batch = { iterations = 199, seed = 7, duration = 120, durationVariation = 15, capWindow = -1 }
-local one = Contract.evaluate(hitcapSnap, batch)
-check("strength and attack power come from the pathwise slopes",
-  one.run.plan.strength.kind == "pathwise" and one.run.plan.attack_power.kind == "pathwise"
-    and near(one.weights.strength, perPoint.strength.attackPower * one.weights.attack_power, 1e-12))
-check("agility is the crit weight times the perPoint ratio", one.run.plan.agility.kind == "derived"
-  and near(one.weights.agility, one.weights.crit_rating * perPoint.agility.meleeCritPercent
-    / perPoint.crit_rating.meleeCritPercent, 1e-12))
+local dw29Snap = snapshots["enh60-rockbiter-dw29-hit97"]
+local plain = { duration = 120, durationVariation = 15 }
+local kinds = Enh.weightKinds(hitcapSnap, plain, Enh.weightStats)
+local dwKinds = Enh.weightKinds(dw29Snap, plain, Enh.weightStats)
+check("strength and attack power are pathwise; agility, intellect, crit and haste are simulated",
+  kinds.strength == "pathwise" and kinds.attack_power == "pathwise" and kinds.agility == "simulated"
+    and kinds.intellect == "simulated" and kinds.crit_rating == "simulated" and kinds.haste_rating == "simulated")
+check("hit at a two-hander's cap is zero; hit under the dual-wield white cap is simulated",
+  kinds.hit_rating == "zero" and dwKinds.hit_rating == "simulated",
+  tostring(kinds.hit_rating) .. " " .. tostring(dwKinds.hit_rating))
 
-local byDifference = {}
-for k, v in pairs(batch) do byDifference[k] = v end
-byDifference.event = { pathwise = false }
-byDifference.stats = { "strength", "attack_power" }
-local fd = Contract.evaluate(hitcapSnap, byDifference)
-check("the pathwise strength slope equals the +100 forward difference on the same draws",
-  fd.run.plan.strength.kind == "simulated" and math.abs(fd.weights.strength / one.weights.strength - 1) < 1e-6
-    and math.abs(fd.weights.attack_power / one.weights.attack_power - 1) < 1e-6,
-  string.format("fd %.8f pathwise %.8f", fd.weights.strength, one.weights.strength))
+local o29 = Enh.eventOptions(plain, 29)
+local atCap = EventSim.run(EventSim.character(hitcapSnap), plain, 7, 29, o29)
+local past = EventSim.run(EventSim.character(ns.Engine.Core.Weights.shift(hitcapSnap, "hit_rating", 100)), plain, 7, 29, o29)
+local hitSame = #atCap == 29
+for i = 1, 29 do if atCap[i] ~= past[i] then hitSame = false end end
+check("+100 hit past the cap changes no fight, so the zero kind is exact", hitSame)
 
-local agileAp = {}
-for k, v in pairs(hitcapSnap) do agileAp[k] = v end
-agileAp.model = {}
-for k, v in pairs(hitcapSnap.model) do agileAp.model[k] = v end
-agileAp.model.perPoint = {}
-for k, v in pairs(perPoint) do agileAp.model.perPoint[k] = v end
-agileAp.model.perPoint.agility = { meleeCritPercent = perPoint.agility.meleeCritPercent, attackPower = 1 }
-check("agility from crit refuses a perPoint.agility with an attack power term",
-  raises(function() Contract.evaluate(agileAp, batch) end, "agility from crit"))
-
-local staked = {}
-for k, v in pairs(batch) do staked[k] = v end
-staked.stopRule = "dps"
-local rule = ns.Engine.Core.Defaults.stopRules.dps
-local stop = Contract.evaluate(hitcapSnap, staked)
-local stakeOk, detail = stop.batches >= ns.Engine.Core.Defaults.stopMinBatches, ""
-for stat, w in pairs(stop.weights) do
-  local se = stop.run.se[stat]
-  if stop.run.settled[stat] and not (rule.z * se * rule.points < rule.stake) then
-    stakeOk, detail = false, stat
-  end
-  if stop.fights[stat] % ns.Engine.Core.Defaults.stopBatchSize ~= 0 or stop.fights[stat] > stop.iterations then
-    stakeOk, detail = false, stat .. " fights " .. tostring(stop.fights[stat])
-  end
+local pwSteps = { strength = 100, attack_power = 100 }
+local pwPlan = Enh.fightPlan(hitcapSnap, plain, { "strength", "attack_power" }, pwSteps)
+local fdScenario = { duration = 120, durationVariation = 15, event = { pathwise = false } }
+local fdPlan = Enh.fightPlan(hitcapSnap, fdScenario, { "strength", "attack_power" }, pwSteps)
+local _, pw = pwPlan.run(nil, 7, 199, 1, 199)
+local fdBase = fdPlan.run(nil, 7, 199, 1, 199)
+local function fdMean(stat)
+  local plus, sum = fdPlan.run(stat, 7, 199, 1, 199), 0
+  for i = 1, 199 do sum = sum + (plus[i] - fdBase[i]) / 100 end
+  return sum / 199
 end
-check("the dps stop rule stops every weight under the stake, in whole batches", stakeOk
-  and next(stop.run.settled) ~= nil, detail)
+local function mean(list)
+  local sum = 0
+  for i = 1, #list do sum = sum + list[i] end
+  return sum / #list
+end
+local fdStr, pwStr = fdMean("strength"), mean(pw.strength)
+check("the pathwise strength slope equals the +100 forward difference on the same draws",
+  fdPlan.kinds.strength == "simulated" and math.abs(fdStr / pwStr - 1) < 1e-6
+    and math.abs(fdMean("attack_power") / mean(pw.attack_power) - 1) < 1e-6,
+  string.format("fd %.8f pathwise %.8f", fdStr, pwStr))
+check("a pathwise strength slope is perPoint.strength times the attack power slope",
+  near(mean(pw.strength), hitcapSnap.model.perPoint.strength.attackPower * mean(pw.attack_power), 1e-12))
+
+local split = EventSim.run(EventSim.character(dw29Snap), plain, 7, 29, o29)
+local pieces, at = {}, 1
+for _, n in ipairs({ 1, 7, 21 }) do
+  local o = Enh.eventOptions(plain, 29)
+  o.first = at
+  local part = EventSim.run(EventSim.character(dw29Snap), plain, 7, n, o)
+  for i = 1, n do pieces[at + i - 1] = part[i] end
+  at = at + n
+end
+local splitSame = true
+for i = 1, 29 do if split[i] ~= pieces[i] then splitSame = false end end
+check("a stratified batch run in pieces (opts.first) equals the batch in one run", splitSame)
+
+local first = Contract.evaluate(hitcapSnap, { seed = 3, capWindow = -1, stage = 1, duration = 120, durationVariation = 15 })
+check("Enhancement's stage 1 runs stageFirstFights over the base run and its simulated stats",
+  first.stage >= 1 and first.iterations <= Defaults.stageFirstFights and first.fights.agility > 0,
+  string.format("stage %d fights %d", first.stage, first.iterations))
 
 ------------------------------------------------------------------------------
 -- Draw discipline (EventSim.lua header)

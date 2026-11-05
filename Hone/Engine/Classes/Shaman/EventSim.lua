@@ -45,6 +45,9 @@
 --   pathwise     per-fight dDamage/dAttackPower and dDamage/dSpellDamage along the path.
 --   flurryFirst  Flurry hears a melee hit before Windfury and the totem (see onMeleeResult).
 --   tally        the per-action tally.
+--   first        the index of the run's first fight (default 1). Indexed draws make fight f a
+--                function of (seed, lhs, f) alone, so fights first..first + n - 1 in one run
+--                equal the same fights split across several runs.
 --   audit        a list that receives the key, slot and value of every indexed draw (tests only).
 
 local _, ns = ...
@@ -209,7 +212,7 @@ local EV_MANA, EV_FARSEER_END, EV_FLURRY_END = 11, 12, 13
 -- Fights
 ------------------------------------------------------------------------------
 
--- Runs `iterations` fights. `source` is an Rng for stream draws (its state advances as main's
+-- Runs `iterations` fights from opts.first. `source` is an Rng for stream draws (its state advances as main's
 -- did) or a seed number for either mode. Returns per-fight dps, the Windfury rule, the
 -- per-action tally (opts.tally) and, with opts.pathwise, { dAP = {...}, dSP = {...} } per
 -- fight in dps per point.
@@ -1240,7 +1243,9 @@ function EventSim.run(char, scenario, source, iterations, opts)
   -- Prepull and the fight loop
   ----------------------------------------------------------------------------
 
-  for iter = 1, iterations do
+  local first = opts.first or 1
+  for iter = first, first + iterations - 1 do
+    local out = iter - first + 1
     fightNo = iter
     if startFight then startFight(iter) end
     if h then
@@ -1343,11 +1348,11 @@ function EventSim.run(char, scenario, source, iterations, opts)
 
     if window then
       local span = tMax - tMin
-      dpsValues[iter] = winScore / span
-      if pathwise then slopes.dAP[iter], slopes.dSP[iter] = dAP / span, dSP / span end
+      dpsValues[out] = winScore / span
+      if pathwise then slopes.dAP[out], slopes.dSP[out] = dAP / span, dSP / span end
     else
-      dpsValues[iter] = damage / fightEnd
-      if pathwise then slopes.dAP[iter], slopes.dSP[iter] = dAP / fightEnd, dSP / fightEnd end
+      dpsValues[out] = damage / fightEnd
+      if pathwise then slopes.dAP[out], slopes.dSP[out] = dAP / fightEnd, dSP / fightEnd end
     end
   end
 

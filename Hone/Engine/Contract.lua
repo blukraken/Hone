@@ -8,15 +8,18 @@
 --   simulate(snapshot, scenario)     -> { dps = n, dpsStdev = n?, iterations = n? }
 --   caps(snapshot, scenario)?        -> { [stat] = { stat value of each cap, ... } }
 --   coverage(snapshot, scenario)?    -> list of unmodeled mechanic names
---   weigh(snapshot, scenario, stats, steps)?
---                                    -> { dps = n, weights = { [stat] = n }, dpsStdev = n?,
---                                         iterations = n?, fights = { [stat] = n }?, batches = n? }
---                                    the base dps and forward weights in one call, for a model
---                                    that runs its own batches or stop rule; without it evaluate
---                                    calls simulate once per stat
+--   fightPlan(snapshot, scenario, stats, steps)?
+--                                    -> a plan for the staged stepper (Core/Weights.lua): how
+--                                       each stat is weighed and a function that runs any range
+--                                       of fights. Without it evaluate calls simulate once per
+--                                       stat
 --
 -- A snapshot is plain data: { class = token, spec = token, stats = { [stat] = n }, ... }.
 -- A model may read any other snapshot field it documents.
+--
+-- begin(snapshot, scenario) returns the staged stepper of a model with fightPlan: step(fights)
+-- runs that many fights at most and result() gives the current weights, their 95% half-widths,
+-- the stage reached and the fights behind each weight.
 --
 -- evaluate returns
 --   dps, dpsStdev, iterations
@@ -29,7 +32,9 @@
 -- leaves out. A scenario that sets weightDelta alone steps every stat by it. A step stops at a
 -- cap rather than cross it.
 --   coverage                         { complete = bool, unmodeled = { name, ... } }
---   fights, batches                  what weigh reports, when the model has it
+--   stage, halfWidths, fights, batches
+--                                    the stepper's, when the model has fightPlan; evaluate
+--                                    drives it to scenario.stage
 
 local _, ns = ...
 ns.Engine = ns.Engine or {}
@@ -67,17 +72,40 @@ function Contract.registered()
   return out
 end
 
-function Contract.evaluate(snapshot, scenario)
-  assert(type(snapshot) == "table", "evaluate: snapshot table required")
+-- The model, the merged scenario, the stats, their steps and their caps.
+local function prepare(snapshot, scenario, who)
+  assert(type(snapshot) == "table", who .. ": snapshot table required")
   local impl = Contract.lookup(snapshot.class, snapshot.spec)
   if not impl then
-    error(string.format("evaluate: no model registered for %s/%s",
-      tostring(snapshot.class), tostring(snapshot.spec)), 2)
+    error(string.format("%s: no model registered for %s/%s", who,
+      tostring(snapshot.class), tostring(snapshot.spec)), 3)
   end
   local ownDeltaOnly = type(scenario) == "table" and scenario.weightDelta ~= nil
     and scenario.weightSteps == nil
   scenario = Table.merge(Defaults, scenario)
   if ownDeltaOnly then scenario.weightSteps = {} end
+  local stats = scenario.stats or impl.weightStats
+  local caps = impl.caps and impl.caps(snapshot, scenario) or {}
+  for stat, list in pairs(caps) do
+    assert(type(list) == "table", "caps must map each stat to a list of caps: " .. tostring(stat))
+  end
+  local steps = Weights.steps(snapshot, stats, scenario.weightSteps, scenario.weightDelta, caps)
+  return impl, scenario, stats, steps, caps
+end
+
+local function stepperOf(impl, snapshot, scenario, stats, steps)
+  return Weights.stepper(impl.fightPlan(snapshot, scenario, stats, steps), stats, steps, scenario)
+end
+
+function Contract.begin(snapshot, scenario)
+  local impl, merged, stats, steps = prepare(snapshot, scenario, "begin")
+  if not impl.fightPlan then error("begin: the model has no fightPlan", 2) end
+  return stepperOf(impl, snapshot, merged, stats, steps)
+end
+
+function Contract.evaluate(snapshot, scenario)
+  local impl, stats, steps, caps
+  impl, scenario, stats, steps, caps = prepare(snapshot, scenario, "evaluate")
 
   local function dpsOf(s)
     local run = impl.simulate(s, scenario)
@@ -85,20 +113,12 @@ function Contract.evaluate(snapshot, scenario)
     return run.dps, run
   end
 
-  local stats = scenario.stats or impl.weightStats
   local unmodeled = impl.coverage and impl.coverage(snapshot, scenario) or {}
-  local caps = impl.caps and impl.caps(snapshot, scenario) or {}
-  for stat, list in pairs(caps) do
-    assert(type(list) == "table", "caps must map each stat to a list of caps: " .. tostring(stat))
-  end
-  local steps = Weights.steps(snapshot, stats, scenario.weightSteps, scenario.weightDelta, caps)
-
   local dps, run, weights, capBase
-  if impl.weigh then
-    run = impl.weigh(snapshot, scenario, stats, steps)
-    assert(type(run) == "table" and type(run.dps) == "number" and type(run.weights) == "table",
-      "weigh must return { dps = n, weights = { ... } }")
+  if impl.fightPlan then
+    run = stepperOf(impl, snapshot, scenario, stats, steps):run(scenario.stage):result()
     dps, weights = run.dps, run.weights
+    run.iterations = run.fightsTotal
     -- Cap weights pair with one simulate run of their own, so their base is that run.
     capBase = function() return (dpsOf(snapshot)) end
   else
@@ -114,6 +134,8 @@ function Contract.evaluate(snapshot, scenario)
     run = run,
     weights = weights,
     steps = steps,
+    stage = run.stage,
+    halfWidths = run.halfWidths,
     fights = run.fights,
     batches = run.batches,
     capWeights = Weights.caps(dpsOf, snapshot, capBase, caps, scenario.weightSteps, scenario.weightDelta,
