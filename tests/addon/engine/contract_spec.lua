@@ -305,6 +305,35 @@ check("inverse-variance combination weights each estimate by its precision",
 check("begin refuses a model without fightPlan",
   raises(function() Contract.begin({ class = "TESTCLASS", spec = "LINEAR", stats = {} }, {}) end, "fightPlan"))
 
+-- The variance floor. Stratified batches of this plan agree exactly, so their spread is 0, while
+-- stage 1's unstratified fights carry noise. The batch variance must rise to stage 1's per-fight
+-- variance x stageStratificationGain / batch fights, keeping batches - 1 degrees of freedom.
+local floorPlan = {
+  kinds = { power = "simulated" },
+  run = function(stat, seed, strata, first, count)
+    local values = {}
+    for i = 1, count do
+      local v = 100
+      if stat then v = v + 20 + (strata and 0 or 50 * noise(seed, first + i - 1, 3)) end
+      values[i] = v
+    end
+    return values
+  end,
+}
+local floorScenario = {}
+for k, v in pairs(Defaults) do floorScenario[k] = v end
+floorScenario.seed = 5
+local fst = Weights.stepper(floorPlan, { "power" }, { power = 100 }, floorScenario):run(2)
+local fm, fv, _, fnb, fdf = fst:estimate("power")
+local fsamples = fst:firstSamples("power")
+local m1, v1 = Weights.meanVar(fsamples)
+local lowest = v1 * #fsamples * Defaults.stageStratificationGain / (fnb * Defaults.stageBatchSize)
+local _, wantV, wantDf = Weights.combine(m1, v1, 0.2, lowest, #fsamples - 1, fnb - 1)
+check("a simulated stat's batch variance never falls below the stage 1 floor",
+  fnb >= Defaults.stageMinBatches and fv > 0 and near(fv, wantV) and near(fdf, wantDf)
+    and fst:result().halfWidths.power > 0,
+  string.format("batches %d variance %.3g want %.3g df %.3g want %.3g", fnb, fv, wantV, fdf, wantDf))
+
 ------------------------------------------------------------------------------
 -- Enhancement weights: kinds and pathwise slopes
 ------------------------------------------------------------------------------

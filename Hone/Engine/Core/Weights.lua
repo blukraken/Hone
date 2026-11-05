@@ -294,7 +294,8 @@ function Weights.stepper(plan, stats, steps, scenario)
   local self = setmetatable({
     plan = plan, stats = stats, steps = steps, seed = scenario.seed,
     firstFights = scenario.stageFirstFights, batchSize = scenario.stageBatchSize,
-    minBatches = scenario.stageMinBatches, quantile = scenario.stageQuantile, stake = scenario.stageStake,
+    minBatches = scenario.stageMinBatches, gain = scenario.stageStratificationGain,
+    quantile = scenario.stageQuantile, stake = scenario.stageStake,
     points = scenario.stakePoints, relative = scenario.stageRelative, maxFights = scenario.stageMaxFights,
     stage = 0, done = false, fightsTotal = 0, unit = nil,
     first = { base = {}, plus = {}, pw = {} },
@@ -323,18 +324,30 @@ function Stepper:firstSamples(stat)
 end
 
 -- Weight, variance of the weight, fights behind it, batches in it and degrees of freedom.
+--
+-- The stop test (gap, below) reads this variance. A simulated stat's batch-mean variance never
+-- falls below its stage 1 per-fight variance x stageStratificationGain / its batch fights,
+-- and keeps batches - 1 degrees of freedom. A few batches can agree by luck, and the stepper
+-- stops giving batches to a stat whose spread looks small, so without this floor that stat
+-- stops on a too-narrow interval.
 function Stepper:estimate(stat)
-  if self.plan.kinds[stat] == "zero" then return 0, 0, 0, 0, huge end
+  local kind = self.plan.kinds[stat]
+  if kind == "zero" then return 0, 0, 0, 0, huge end
   local samples = self:firstSamples(stat)
   local m, v = meanVar(samples)
-  local df = #samples - 1
+  local n1 = #samples
+  local df = n1 - 1
   local means = self.means[stat]
   local nb = #means
   if nb >= self.minBatches then
     local m2, v2 = meanVar(means)
+    if kind == "simulated" and v ~= huge then
+      local floor = v * n1 * self.gain / (nb * self.batchSize)
+      if v2 < floor then v2 = floor end
+    end
     m, v, df = combine(m, v, m2, v2, df, nb - 1)
   end
-  return m, v, #samples + nb * self.batchSize, nb, df
+  return m, v, n1 + nb * self.batchSize, nb, df
 end
 
 -- The 95% half-width of an estimate with variance v and df degrees of freedom.

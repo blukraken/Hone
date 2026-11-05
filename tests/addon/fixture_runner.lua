@@ -21,13 +21,15 @@
 -- With --report --staged --pool N it runs N independent evaluates per fixture instead and
 -- pools their stage 2 and stage 3 weights against MythicSim's pooled samples through
 -- tests/addon/engine/compare.lua. --coverage adds, per fixture and stage, the share of
--- (seed, stat) pairs whose own 95% interval holds MythicSim's pooled mean, against
--- COVERAGE_LINE. A stat weighed as "zero" has no interval and is left out.
+-- (seed, stat) pairs whose own 95% interval holds the reference, against COVERAGE_LINE. The
+-- reference is MythicSim's pooled mean, or with --coverage-ref engine the engine's own
+-- long-run weight from tests/addon/engine/data/engine_reference.lua (decision 0017). A stat
+-- weighed as "zero" has no interval and is left out.
 --
 -- With --report --staged --seeds N it runs N evaluates per fixture, each once, on the pool's
 -- seeds, and prints per stage the median and slowest cumulative ms, the slowest seed, the
--- fights per stat and the minimum-spec forecast. Stages 1 and 2 are judged on the slowest
--- seed (decision 0015); stage 3 has no line.
+-- fights per stat and the minimum-spec forecast. Stage 1 is judged on the slowest seed and
+-- stage 2 on the median and the slowest (decision 0017); stage 3 has no line.
 --
 -- Report evaluates leave cap weights out (capWindow -1). The cost they time is the base run
 -- and the weights, which is what the MODEL-06b checks price.
@@ -51,7 +53,9 @@ usage: lua tests/addon/fixture_runner.lua --engine NAME [options]
   --pool N           hone --report --staged: N independent evaluates per fixture, pooled
                      at stage 2 and stage 3 through compare.lua
   --coverage         with --pool: share of (seed, stat) pairs whose own interval holds
-                     MythicSim's pooled mean, per fixture at stages 2 and 3
+                     the reference, per fixture at stages 2 and 3
+  --coverage-ref REF with --coverage: mythicsim (MythicSim's pooled mean, default) or
+                     engine (tests/addon/engine/data/engine_reference.lua)
   --seeds N          hone --report --staged: N seeds per fixture, each run once; per stage
                      the median and slowest ms and the fights per stat
   --only ID          run only the fixture with this id (repeatable)
@@ -70,9 +74,14 @@ local STAGED_REPEATS = 5
 -- Core/Defaults stageMaxFights caps it well under this many batches.
 local POOL_STRIDE = 1000
 
--- Cumulative ms stages 1 and 2 must land under (decision 0014). Stage 3 has no line and runs
--- in the background (decision 0015).
+-- Cumulative ms stages 1 and 2 must land under (decision 0014). One timed seed is held to
+-- these. Stage 3 has no line and runs in the background (decision 0015).
 local STAGE_LINES = { 150, 1000 }
+
+-- Over --seeds (decision 0017): stage 1 on the slowest seed, stage 2 on the median and the
+-- slowest.
+local STAGE_MEDIAN_LINES = { [2] = 1000 }
+local STAGE_SLOWEST_LINES = { 150, 1500 }
 local STAGE_NAMES = { "first", "verdicts", "final" }
 
 -- Share of (seed, stat) pairs whose own interval must hold MythicSim's pooled mean.
@@ -451,27 +460,37 @@ local function make_hone(opts)
       dps[k] = res[3].dps
     end
     local reference = Compare.mythicsimSamples(mcase, ref.delta, stats)
+    local basis, target = "mythicsim", {}
+    for _, stat in ipairs(stats) do target[stat] = Compare.summary(reference[stat]).mean end
+    if opts.coverageRef == "engine" then
+      local eref = dofile(root .. "/tests/addon/engine/data/engine_reference.lua")
+      local ecase = eref.cases[fx.id]
+      if not ecase then error("no engine reference for " .. fx.id, 0) end
+      basis = string.format("the engine reference (%d x %d fights, seed %d)", eref.batches, eref.strata, eref.seed)
+      for _, stat in ipairs(stats) do target[stat] = ecase.weights[stat].weight end
+    end
     local verdicts = {}
     for _, s in ipairs({ 2, 3 }) do
       local r = Compare.fixture(samples[s], reference, stats)
       print(string.format("== stage %d (%s), %d evaluates pooled, %.0f ms mean and %.0f ms slowest, %.0f fights mean"
         .. " per evaluate", s, STAGE_NAMES[s], n, ms[s], slowest[s], fights[s]))
       Compare.printFixture(fx.id, r, stats)
-      -- How often one evaluate's own 95% interval holds MythicSim's pooled mean.
+      -- How often one evaluate's own 95% interval holds the coverage reference.
       local parts, held, pairs_ = {}, 0, 0
       for _, stat in ipairs(stats) do
-        local m, hits = Compare.summary(reference[stat]).mean, 0
+        local m, hits = target[stat], 0
         for k = 1, n do
           if math.abs(samples[s][stat][k] - m) <= widths[s][stat][k] then hits = hits + 1 end
         end
         parts[#parts + 1] = string.format("%s %d/%d", stat, hits, n)
         if kinds[stat] ~= "zero" then held, pairs_ = held + hits, pairs_ + n end
       end
-      print("  own interval holds mythicsim: " .. table.concat(parts, "  "))
+      print("  own interval holds " .. basis .. ": " .. table.concat(parts, "  "))
       r.coverage = pairs_ > 0 and held / pairs_ or 1
       if opts.coverage then
-        print(string.format("  COVERAGE %s stage %d: %d/%d (seed, stat) pairs, %.1f%%, line %.0f%% %s", fx.id, s,
-          held, pairs_, r.coverage * 100, COVERAGE_LINE * 100, r.coverage >= COVERAGE_LINE and "met" or "MISS"))
+        print(string.format("  COVERAGE %s stage %d against %s: %d/%d (seed, stat) pairs, %.1f%%, line %.0f%% %s",
+          fx.id, s, opts.coverageRef or "mythicsim", held, pairs_, r.coverage * 100, COVERAGE_LINE * 100,
+          r.coverage >= COVERAGE_LINE and "met" or "MISS"))
       end
       verdicts[s] = r
     end
@@ -521,14 +540,22 @@ local function make_hone(opts)
         if ms[s][k] > worst then worst, worstK = ms[s][k], k end
       end
       slowest[s] = worst
-      local line = STAGE_LINES[s]
-      local over = line and not (worst < line)
-      if over then misses = misses + 1 end
-      local verdict = line and string.format("slowest vs line %d ms %s", line, over and "MISS" or "under")
-        or "no line"
+      local mid, verdicts = median(ms[s]), {}
+      local mline, sline = STAGE_MEDIAN_LINES[s], STAGE_SLOWEST_LINES[s]
+      if mline then
+        local over = not (mid < mline)
+        if over then misses = misses + 1 end
+        verdicts[#verdicts + 1] = string.format("median vs line %d ms %s", mline, over and "MISS" or "under")
+      end
+      if sline then
+        local over = not (worst < sline)
+        if over then misses = misses + 1 end
+        verdicts[#verdicts + 1] = string.format("slowest vs line %d ms %s", sline, over and "MISS" or "under")
+      end
+      local verdict = #verdicts > 0 and table.concat(verdicts, ", ") or "no line"
       print(string.format("  stage %d %-9s median %6.0f ms  slowest %6.0f ms (seed %d)  %s;"
-        .. " minimum spec x%.2f: median %.0f ms, slowest %.0f ms", s, STAGE_NAMES[s], median(ms[s]), worst,
-        BATCH_SEED + worstK * POOL_STRIDE, verdict, MIN_SPEC_FACTOR, median(ms[s]) * MIN_SPEC_FACTOR,
+        .. " minimum spec x%.2f: median %.0f ms, slowest %.0f ms", s, STAGE_NAMES[s], mid, worst,
+        BATCH_SEED + worstK * POOL_STRIDE, verdict, MIN_SPEC_FACTOR, mid * MIN_SPEC_FACTOR,
         worst * MIN_SPEC_FACTOR))
       local parts = { string.format("total %d / %d (slowest seed %d)", median(fights[s]),
         math.max(unpack(fights[s])), fights[s][worstK]) }
@@ -541,7 +568,7 @@ local function make_hone(opts)
       print("    fights, median / most: " .. table.concat(parts, ", "))
     end
     print("")
-    return { slowest = slowest, misses = misses }
+    return { slowest = slowest, medians = { median(ms[1]), median(ms[2]), median(ms[3]) }, misses = misses }
   end
 
   return engine
@@ -637,12 +664,18 @@ local function parse_args(argv)
     elseif a == "--coverage" then
       opts.coverage = true
     elseif a == "--engine" or a == "--fixtures" or a == "--tolerance" or a == "--iterations"
-        or a == "--path" or a == "--only" or a == "--pool" or a == "--repeats" or a == "--seeds" then
+        or a == "--path" or a == "--only" or a == "--pool" or a == "--repeats" or a == "--seeds"
+        or a == "--coverage-ref" then
       i = i + 1
       if not argv[i] then return nil, a .. " needs a value" end
       if a == "--engine" then opts.engine = argv[i]
       elseif a == "--fixtures" then opts.fixtures = argv[i]
       elseif a == "--path" then opts.path = argv[i]
+      elseif a == "--coverage-ref" then
+        opts.coverageRef = argv[i]
+        if opts.coverageRef ~= "mythicsim" and opts.coverageRef ~= "engine" then
+          return nil, "--coverage-ref needs mythicsim or engine"
+        end
       elseif a == "--pool" then
         opts.pool = tonumber(argv[i])
         if not opts.pool or opts.pool < 2 then return nil, "--pool needs a number of at least 2" end
@@ -726,6 +759,10 @@ local function main()
     io.stderr:write("error: --coverage needs --pool\n")
     return 2
   end
+  if opts.coverageRef and not opts.coverage then
+    io.stderr:write("error: --coverage-ref needs --coverage\n")
+    return 2
+  end
 
   local built, engine = pcall(factory, opts)
   if built and engine.prepare then
@@ -777,8 +814,8 @@ local function main()
     local errored, misses, lines = 0, 0, {}
     print(string.format("staged seeds report, engine hone, path %s, %d seeds per fixture, each run once,"
       .. " os.clock (wall on this build), cap weights off", opts.path or "event", opts.seeds))
-    print(string.format("lines on the slowest seed: stage 1 under %d ms, stage 2 under %d ms, cumulative;"
-      .. " stage 3 no line", STAGE_LINES[1], STAGE_LINES[2]))
+    print(string.format("lines, cumulative: stage 1 slowest seed under %d ms; stage 2 median under %d ms and slowest"
+      .. " seed under %d ms; stage 3 no line", STAGE_SLOWEST_LINES[1], STAGE_MEDIAN_LINES[2], STAGE_SLOWEST_LINES[2]))
     print("")
     for _, fx in ipairs(fixtures) do
       local ran, r = xpcall(function() return engine.seedsReport(fx) end, debug.traceback)
@@ -787,13 +824,12 @@ local function main()
         print(string.format("ERROR %s %s", fx.id, tostring(r)))
       else
         misses = misses + r.misses
-        lines[#lines + 1] = string.format("%s %.0f / %.0f / %.0f ms", fx.id, r.slowest[1], r.slowest[2],
-          r.slowest[3])
+        lines[#lines + 1] = string.format("%s %.0f / %.0f / %.0f ms (median %.0f / %.0f / %.0f)", fx.id,
+          r.slowest[1], r.slowest[2], r.slowest[3], r.medians[1], r.medians[2], r.medians[3])
       end
     end
     print("slowest seed, stage 1 / 2 / 3 cumulative ms: " .. table.concat(lines, ", "))
-    print(string.format("%d fixtures, %d stage 1 or 2 times at or over their line on the slowest seed", #fixtures,
-      misses))
+    print(string.format("%d fixtures, %d stage 1 or 2 times at or over their line", #fixtures, misses))
     if errored > 0 then return 3 end
     return misses == 0 and 0 or 1
   end
